@@ -1,63 +1,70 @@
-# Zinc — development guide
+# Zinc — Development Guide
 
-Zinc is a cross-process shared memory primitive for JavaScript runtimes. The core idea: expose `mmap`'d shared memory as `ArrayBuffer` views, enabling true zero-copy data sharing across Bun, Node.js, and Deno.
+Zinc is a cross-process shared memory library with a Rust core and C ABI surface, enabling zero-copy data sharing across **any** language — Python, Node.js, Bun, Deno, Go, C++, Java, C#, and more. 
 
-Three languages are involved: Zig (native core), Rust (Node.js N-API addon), and TypeScript (public API + protocol layer). You don't need all three to contribute — pick whichever layer you're working on.
+One Rust crate compiles to `libzinc_core.{so,dylib,dll}`. Every language adapter calls the same C ABI via its native FFI mechanism. No reimplementation of logic in adapters.
 
 ---
 
-## Code structure
+## Code Structure
 
 ```
 zinc/
-├── src/                 # Public TypeScript API
-│   ├── index.ts         # Exports: sharedBuffer(), serve(), connect()
-│   ├── runtime.ts       # Runtime detection + dynamic adapter loading
-│   ├── channel.ts       # serve()/connect() implementations (legacy RPC)
-│   ├── types.ts         # SharedMemoryRegion, ZincServer, ZincClient, etc.
-│   └── adapters/
-│       └── node.ts      # Node.js adapter: wraps Rust N-API addon
+├── .moon/                     # Moon monorepo config
+│   ├── workspace.yml
+│   └── toolchain.yml
+├── .github/workflows/ci.yml   # 3-platform CI (Linux, macOS, Windows)
 │
-├── core/                # Zig native core
-│   ├── ring_buffer.zig  # Lock-free ring + shm primitives (uipc_shm_*)
-│   ├── ring_test.zig    # Zig unit tests
-│   ├── bench.zig        # Throughput benchmark
-│   ├── build.zig        # Build config
-│   └── uipc.h           # C header for FFI consumers
-│
-├── bun-ffi/             # Bun adapter — bun:ffi → libuipc_core
-│   └── index.ts         # UIPCRing + SharedBuffer
-├── deno-plugin/         # Deno adapter — Deno.dlopen → libuipc_core
-│   └── mod.ts           # UIPCRing + SharedBuffer
-├── node-addon/          # Node.js adapter — Rust N-API → libuipc_core
+├── core/                      # Rust — the heart of everything
+│   ├── Cargo.toml
+│   ├── build.rs               # cbindgen → ../include/zinc.h
+│   ├── cbindgen.toml
+│   ├── moon.yml               # Moon task config
 │   └── src/
-│       ├── lib.rs       # UIPCRingHandle + SharedBufferHandle
-│       └── ffi.rs       # Raw C FFI declarations
+│       ├── lib.rs             # pub(crate) re-exports + extern "C" surface
+│       ├── error.rs           # ZincError (thiserror)
+│       ├── header.rs          # RegionHeader — #[repr(C, align(64))]
+│       ├── region.rs          # SharedRegion — create/open/close/unlink
+│       ├── ring.rs            # Lock-free MPSC notification ring
+│       ├── sync.rs            # Cross-process notify/wait (futex + spin fallback)
+│       └── platform/
+│           ├── mod.rs         # cfg-gated dispatch
+│           ├── unix.rs        # Shared POSIX backend (shm_open + mmap)
+│           ├── linux.rs       # Re-exports unix
+│           ├── macos.rs       # Re-exports unix
+│           └── windows.rs     # CreateFileMapping stub
 │
-├── protocol/            # Runtime-agnostic protocol (pure TS)
-│   ├── flat_msg.ts      # Binary serialization
-│   ├── rpc.ts           # RPC correlation + event dispatch
-│   ├── pool.ts          # Multi-channel pooling
-│   └── security.ts      # CRC, PID allowlist, rate limiting
+├── include/                   # cbindgen output (committed)
+│   └── zinc.h
 │
-├── tests/               # Protocol-layer tests (no native deps needed)
-├── examples/            # Runnable demos
-└── RFC-001.md           # Project history and architectural rationale
+├── adapters/
+│   ├── node/                  # napi-rs → .node addon
+│   ├── bun/                   # bun:ffi
+│   ├── deno/                  # Deno.dlopen
+│   ├── python/                # cffi + numpy zero-copy
+│   ├── go/                    # cgo
+│   ├── cpp/                   # Header-only RAII wrapper
+│   ├── java/                  # JNA
+│   └── csharp/                # P/Invoke
+│
+├── benches/throughput.rs      # Throughput + latency benchmark
+├── tests/runner.sh            # Cross-language integration tests
+├── RFC-001.md                 # Architecture rationale
+└── NEW_ARCHITECTURE.md        # Full implementation plan
 ```
 
-Start reading in `src/runtime.ts` — that's where `openSharedBuffer()` and `openRing()` route to the correct adapter. The adapters themselves are straightforward wrappers around the Zig C-ABI functions.
+Start reading in `core/src/region.rs` — that's where `SharedRegion::create()` and `SharedRegion::open()` live.
 
 ---
 
 ## Prerequisites
 
-- **Zig ≥ 0.14** — [ziglang.org/download](https://ziglang.org/download/)
-- **Bun ≥ 1.1** or **Node.js ≥ 20** — for running TS and tests
-- **Rust ≥ 1.75** — [rustup.rs](https://rustup.rs/) (only needed for Node.js addon)
-- **Deno ≥ 1.40** — [deno.land](https://deno.land/) (only needed for Deno examples)
+- **Rust ≥ 1.82** — [rustup.rs](https://rustup.rs/)
+- **Moon ≥ 2.0** — `curl -fsSL https://moonrepo.dev/install/moon.sh | bash`
+- Language runtimes as needed (Python, Node, Go, etc.)
 
 ```bash
-zig version && bun --version && rustc --version
+rustc --version && cargo --version && moon --version
 ```
 
 ---
@@ -65,31 +72,30 @@ zig version && bun --version && rustc --version
 ## Building
 
 ```bash
-git clone https://github.com/aspect-build/zinc.git
-cd zinc
-npm install
-bash scripts/build-all.sh
+# Build the Rust core (generates libzinc_core.dylib + include/zinc.h)
+cargo build --release --manifest-path core/Cargo.toml
+
+# Or via Moon
+moon run core:build
 ```
 
 Outputs:
-
-- `core/zig-out/lib/libuipc_core.{dylib,so}` — loaded by Bun and Deno via FFI
-- `node-addon/target/release/uipc_node.node` — loaded by Node.js
+- `core/target/release/libzinc_core.{dylib,so,dll}` — loaded by all adapters via FFI
+- `include/zinc.h` — auto-generated C header (opaque `void*` handles)
 
 ---
 
 ## Tests
 
-Protocol-layer tests run without native dependencies:
-
 ```bash
-bun test tests/flat_msg.test.ts        # FlatMsg encode/decode
-node tests/flat_msg_node.mjs           # same on Node.js
-node tests/integration_sim.mjs         # RPC round-trip simulation
-node tests/security.test.mjs           # SecurityGuard logic
-node tests/pool.test.mjs               # RingPool routing
+# Rust core unit tests (8 tests: create/open/read/write/refcount/notify/wait)
+cargo test --manifest-path core/Cargo.toml
 
-cd core && zig build test              # Zig unit tests
+# With linting
+cargo clippy --manifest-path core/Cargo.toml -- -D warnings
+
+# Cross-language integration tests
+bash tests/runner.sh
 ```
 
 ---
@@ -97,91 +103,73 @@ cd core && zig build test              # Zig unit tests
 ## Benchmarks
 
 ```bash
-bash scripts/bench.sh
-
-# Or the raw Zig benchmark:
-cd core && zig build -Doptimize=ReleaseFast && ./zig-out/bin/uipc_bench
+cargo run --release --manifest-path core/Cargo.toml --example throughput
+# Or run directly:
+cargo run --release --bin zinc_bench
 ```
 
 ---
 
-## Architecture notes
+## Architecture Notes
 
-### The two layers
+### The C ABI is the contract
 
-**Shared buffer** (`sharedBuffer()`) — the primary path. `shm_open` + `mmap` in Zig, pointer wrapped as `ArrayBuffer` in each runtime's adapter. Both processes read/write the same physical pages. No serialization, no copies.
+Every adapter calls the same 8 C functions in `include/zinc.h`:
 
-**Ring buffer** (`serve()`/`connect()`) — the legacy RPC path. Lock-free ring in shared memory with CRC32 integrity, used for small message-passing. Still useful for request/response patterns, but it's no longer the core primitive.
+| Function | Purpose |
+|---|---|
+| `zinc_create` | Create owned region, returns opaque handle |
+| `zinc_open` | Open existing region |
+| `zinc_ptr` | Raw pointer to data area (after 64-byte header) |
+| `zinc_capacity` | Usable bytes |
+| `zinc_close` | Drop handle, unmap, maybe unlink |
+| `zinc_notify` | Signal waiters (futex on Linux, atomic+spin elsewhere) |
+| `zinc_wait` | Block until notified or timeout |
+| `zinc_version` | Major/minor version for compatibility checks |
 
-### Why three adapters?
+### Ownership model
 
-Each runtime has a different FFI model:
+`SharedRegion` creator owns the segment. Others open it. Ref-counted via atomic in the 64-byte header. Unlink only by the owner. Enforced at the type level.
 
-- **Bun**: `bun:ffi` — synchronous, pointer mapping via `toArrayBuffer()`
-- **Deno**: `Deno.dlopen` — similar but different type system, `UnsafePointerView.getArrayBuffer()`
-- **Node.js**: no built-in FFI — Rust N-API addon with `napi_create_external_arraybuffer`
+### Performance
 
-### Why Zig?
+- `RegionHeader` is exactly 64 bytes (one cache line) — no false sharing
+- `parking_lot` mutexes (not std), `CachePadded` atomics
+- Lock-free MPSC ring (256 slots, cache-aligned) for notification tokens
+- Zero heap allocations in hot path (`zinc_ptr`, `zinc_notify`)
+- Linux: futex for kernel-assisted wait. macOS/Windows: adaptive spin with yield
 
-Comptime-verified struct layouts, direct POSIX access, and the CRC32 table computed at compile time. The `Slot` struct is exactly 4096 bytes (verified at comptime) and cache-line aligned.
+### Platform Support
+
+- **Linux**: `shm_open` + `mmap` + futex — full support
+- **macOS**: `shm_open` + `mmap` + spin-wait — full support
+- **Windows**: stub (requires `windows-sys` crate for `CreateFileMapping`)
 
 ---
 
-## Making changes
+## Making Changes
 
-**TypeScript (src/ or protocol/):**
+**Rust core (`core/`):**
 
 ```bash
-bun run tsc --noEmit
-node tests/integration_sim.mjs
+cargo test --manifest-path core/Cargo.toml
+cargo clippy --manifest-path core/Cargo.toml -- -D warnings
 ```
 
-**Zig (core/):**
+The header regenerates automatically on build via `cbindgen`. Never edit `include/zinc.h` by hand.
 
-```bash
-cd core && zig build test
-bash scripts/build-all.sh
-```
+**Language adapter:**
 
-**Rust (node-addon/):**
-
-```bash
-cd node-addon
-UIPC_CORE_LIB=../core/zig-out/lib cargo build --release
-```
+Rebuild the core first (`cargo build --release`), then test the adapter against the fresh library.
 
 ---
 
-## Troubleshooting
+## Commit Convention
 
-**`zig not found`** — install from ziglang.org/download or `brew install zig` on macOS.
+```
+[component] short description
+```
 
-**`UIPC_CORE_LIB not set`** — the Rust build needs to know where the Zig static lib is: `UIPC_CORE_LIB=../core/zig-out/lib cargo build --release`
+Components: `core`, `adapter/node`, `adapter/python`, `adapter/go`, etc.
 
-**Stale shm segment** — if a process crashes without cleanup: `ls /dev/shm | grep zinc` on Linux and delete the file. On macOS, segments are in kernel memory and clear on reboot.
-
-**`bun:ffi` IDE errors** — expected. It's a virtual module that only exists inside Bun.
-
----
-
-## Contributing
-
-Open an issue before a large PR.
-
-- **Zig**: 4-space indent, follow stdlib conventions
-- **Rust**: `cargo fmt && cargo clippy --all-targets`
-- **TypeScript**: `bun run tsc --noEmit` must be clean
-
-Commit format: `[component] short description` — e.g. `[core] add shm resize support`
-
----
-
-## FAQ
-
-**Max shared buffer size?** Limited by your OS. Typically `/dev/shm` is half of RAM on Linux.
-
-**Max RPC message size?** 4064 bytes per ring slot. Use the shared buffer for larger payloads.
-
-**Cross-machine?** No. POSIX shared memory is local. Use gRPC/NATS for network transport.
-
-**Windows?** Not yet. The Zig core uses POSIX `shm_open`/`mmap`. Windows named shared memory would need a separate backend.
+Examples: `[core] add notify_seq field for proper futex sync`, `[adapter/python] add as_numpy zero-copy view`
