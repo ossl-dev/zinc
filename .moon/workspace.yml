@@ -1,0 +1,19 @@
+$schema: 'https://moonrepo.dev/schemas/workspace.json'
+
+projects:
+  core: 'core'
+  adapter-node: 'adapters/node'
+  adapter-bun: 'adapters/bun'
+  adapter-deno: 'adapters/deno'
+  adapter-python: 'adapters/python'
+  adapter-go: 'adapters/go'
+  adapter-cpp: 'adapters/cpp'
+  adapter-java: 'adapters/java'
+  adapter-csharp: 'adapters/csharp'
+  docs: 'docs'
+  example-polyglot: 'examples/polyglot-counter'
+  example-ml: 'examples/ml-pipeline'
+
+vcs:
+  manager: git
+  defaultBranch: main

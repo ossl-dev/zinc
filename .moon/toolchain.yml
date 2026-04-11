@@ -1,0 +1,8 @@
+$schema: 'https://moonrepo.dev/schemas/toolchain.json'
+
+node:
+  version: '22.0.0'
+  packageManager: bun
+
+rust:
+  version: '1.95.0'
