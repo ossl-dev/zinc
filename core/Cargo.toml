@@ -1,0 +1,20 @@
+[package]
+name = "zinc-core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+thiserror = "2"
+memmap2 = "0.9"
+parking_lot = "0.12"
+crossbeam-utils = "0.8"
+libc = "0.2"
+
+[build-dependencies]
+cbindgen = "0.28"
+
+[dev-dependencies]
+static_assertions = "1"
