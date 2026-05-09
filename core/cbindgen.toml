@@ -1,0 +1,16 @@
+language = "C"
+include_guard = "ZINC_H"
+documentation = true
+tab_width = 4
+
+[export]
+include = ["zinc_"]
+exclude = ["SharedRegion", "RegionInner", "RegionHeader"]
+
+[parse]
+parse_deps = false
+include = []
+
+[fn]
+args = "Vertical"
+rename_args = "GeckoCase"

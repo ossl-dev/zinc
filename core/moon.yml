@@ -1,0 +1,21 @@
+tasks:
+  build:
+    command: cargo build --release
+    inputs:
+      - "src/**/*.rs"
+      - "Cargo.toml"
+      - "build.rs"
+      - "cbindgen.toml"
+    outputs:
+      - "target/release/libzinc_core.*"
+      - "../include/zinc.h"
+
+  test:
+    command: cargo test
+    deps:
+      - build
+
+  lint:
+    command: cargo clippy -- -D warnings
+    deps:
+      - build
