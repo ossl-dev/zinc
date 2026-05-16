@@ -1,0 +1,17 @@
+{
+  "name": "zinc",
+  "version": "0.1.0",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "napi": {
+    "name": "zinc",
+    "triples": {}
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2"
+  },
+  "scripts": {
+    "build": "napi build --release",
+    "artifacts": "napi artifacts"
+  }
+}
