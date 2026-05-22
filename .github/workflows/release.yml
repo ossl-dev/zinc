@@ -1,0 +1,50 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build-core:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            core/target
+          key: release-${{ runner.os }}-${{ hashFiles('core/Cargo.toml') }}
+      - run: cargo build --release --manifest-path core/Cargo.toml
+      - name: Upload core library
+        uses: actions/upload-artifact@v4
+        with:
+          name: libzinc_core-${{ runner.os }}
+          path: core/target/release/libzinc_core.*
+          if-no-files-found: warn
+
+  release-github:
+    needs: [build-core]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: libzinc_core-*
+          merge-multiple: true
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            adapters/cpp/include/zinc.hpp
+            libzinc_core-Linux/libzinc_core.so
+            libzinc_core-macOS/libzinc_core.dylib
+            libzinc_core-Windows/zinc_core.dll
+          generate_release_notes: true
