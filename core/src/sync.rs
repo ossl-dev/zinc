@@ -9,7 +9,7 @@ pub fn notify(addr: &AtomicU32) {
         libc::syscall(
             libc::SYS_futex,
             addr as *const _ as *mut u32,
-            libc::FUTEX_WAKE | libc::FUTEX_PRIVATE_FLAG,
+            libc::FUTEX_WAKE,
             i32::MAX,
             0,
             0,
@@ -30,7 +30,7 @@ pub fn wait(addr: &AtomicU32, expected: u32, timeout_ms: u32) -> Result<()> {
             libc::syscall(
                 libc::SYS_futex,
                 addr as *const _ as *mut u32,
-                libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
+                libc::FUTEX_WAIT,
                 expected,
                 &ts,
                 0,
