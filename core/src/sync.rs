@@ -39,10 +39,11 @@ pub fn wait(addr: &AtomicU32, expected: u32, timeout_ms: u32) -> Result<()> {
         };
         if ret == -1 {
             let err = std::io::Error::last_os_error();
-            if err.raw_os_error() == Some(libc::ETIMEDOUT) {
-                return Err(crate::ZincError::TimedOut);
+            match err.raw_os_error() {
+                Some(libc::ETIMEDOUT) => return Err(crate::ZincError::TimedOut),
+                Some(libc::EAGAIN) => return Ok(()), // *addr != expected already
+                _ => return Err(crate::ZincError::Platform(err)),
             }
-            return Err(crate::ZincError::Platform(err));
         }
         Ok(())
     }

@@ -4,9 +4,15 @@ use crate::header::{RegionHeader, MAGIC, VERSION};
 use crate::platform;
 use crate::{Result, ZincError};
 
+/// An owned or opened handle to a shared memory region.
+/// `last_seq` tracks the last seen notification sequence number
+/// per-handle to avoid the race where we load an already-incremented
+/// seq as the "expected" value for futex WAIT, which would block
+/// indefinitely waiting for the next notification.
 pub struct SharedRegion {
     inner: RegionInner,
     owner: bool,
+    last_seq: std::sync::atomic::AtomicU32,
 }
 
 struct RegionInner {
@@ -45,6 +51,7 @@ impl SharedRegion {
                 map,
             },
             owner: true,
+            last_seq: std::sync::atomic::AtomicU32::new(0),
         })
     }
 
@@ -65,6 +72,7 @@ impl SharedRegion {
                 map,
             },
             owner: false,
+            last_seq: std::sync::atomic::AtomicU32::new(0),
         })
     }
 
@@ -84,9 +92,34 @@ impl SharedRegion {
         crate::sync::notify(&self.header().notify_seq)
     }
 
+    /// Block until another handle notifies, or timeout.
+    ///
+    /// Uses a per-handle `last_seq` as the "expected" value for the
+    /// underlying futex/sync wait. This avoids the race where:
+    ///   writer: notify_seq.fetch_add(1)
+    ///   reader: load notify_seq → reads 1 (already incremented)
+    ///   reader: futex WAIT expected=1 → *addr == 1 → blocks forever
+    ///
+    /// With `last_seq`, the reader waits for a change from its own
+    /// last-known value, which is always the pre-notification value.
     pub fn wait(&self, timeout_ms: u32) -> Result<()> {
-        let expected = self.header().notify_seq.load(Ordering::Acquire);
-        crate::sync::wait(&self.header().notify_seq, expected, timeout_ms)
+        let last = self.last_seq.load(Ordering::Acquire);
+        let seq_addr = &self.header().notify_seq;
+        // Fast path: seq already changed since last check
+        if seq_addr.load(Ordering::Acquire) != last {
+            self.last_seq
+                .store(seq_addr.load(Ordering::Relaxed), Ordering::Release);
+            return Ok(());
+        }
+        // Wait for seq to differ from our last-known value.
+        // On Linux futex: if seq != last, returns EAGAIN (handled as Ok).
+        // If seq == last, blocks until wake or timeout.
+        let result = crate::sync::wait(seq_addr, last, timeout_ms);
+        if result.is_ok() {
+            self.last_seq
+                .store(seq_addr.load(Ordering::Relaxed), Ordering::Release);
+        }
+        result
     }
 
     fn header(&self) -> &RegionHeader {
@@ -258,6 +291,37 @@ mod tests {
         assert_eq!(val, 42);
 
         handle.join().unwrap();
+        drop(region);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn notify_wait_multiple_cycles() {
+        // Verify repeated notify/wait cycles don't wedge.
+        // Each cycle increments notify_seq. last_seq tracking ensures
+        // we never wait for the value we just saw.
+        let name = "test_notify_multi";
+        cleanup(name);
+        let cap = page_size();
+
+        let region = SharedRegion::create(name, cap).expect("create");
+
+        for i in 0..10 {
+            let region2 = SharedRegion::open(name).expect("open");
+            let handle = std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_micros(100));
+                unsafe { std::ptr::write(region2.as_ptr() as *mut u64, i) };
+                region2.notify();
+            });
+
+            let result = region.wait(5000);
+            assert!(result.is_ok(), "cycle {i}: {result:?}");
+            let val = unsafe { std::ptr::read(region.as_ptr() as *const u64) };
+            assert_eq!(val, i, "cycle {i} data mismatch");
+
+            handle.join().unwrap();
+        }
+
         drop(region);
     }
 
