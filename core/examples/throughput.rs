@@ -2,6 +2,7 @@ use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -31,11 +32,7 @@ fn page_align(size: usize) -> usize {
 }
 
 fn page_size() -> usize {
-    #[cfg(target_os = "macos")]
-    unsafe {
-        libc::sysconf(libc::_SC_PAGESIZE) as usize
-    }
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     unsafe {
         libc::sysconf(libc::_SC_PAGESIZE) as usize
     }
@@ -46,41 +43,44 @@ fn page_size() -> usize {
 }
 
 fn main() {
-    // ── Notify/wait latency (cross-thread) ──
     bench_notify_latency();
 
-    // ── Cross-process data transfer: Zinc vs Unix socket ──
-    for &payload_kb in &[1, 64, 1024, 10240] {
-        let payload = payload_kb * 1024;
+    let sizes: &[usize] = &[1, 64, 1024, 10240, 1048576]; // KB
+    for &payload_kb in sizes {
+        let nominal = payload_kb * 1024;
+        let aligned = page_align(nominal);
         println!("\n--- {} KB payload ---", payload_kb);
-        bench_zinc_transfer(payload);
-        bench_unix_transfer(payload);
+        bench_zinc_transfer(nominal, aligned);
+        bench_unix_transfer(nominal);
     }
 }
 
-/// Measures roundtrip time for an empty signal via cross-thread notify/wait.
-/// Notifier thread runs continuously (every 1 µs) until main thread finishes.
-/// This prevents the race where the notifier finishes before the waiter catches up.
+/// Measures notify/wait roundtrip.
+/// Waiter enters wait() first (blocks on spin-loop), notifier fires 1µs
+/// later. Time recorded is from wait() call to return — the true wakeup
+/// latency of the spin-wait or futex mechanism.
 fn bench_notify_latency() {
-    let parent = create_region(NAME, page_align(4096));
+    let parent = create_region(NAME, 4096);
     let child = open_region(NAME);
+
+    // Notifier runs until done flag, ensuring it never finishes before waiter.
     let done = Arc::new(AtomicBool::new(false));
-    let done_clone = done.clone();
-
-    let iters = 5_000;
-    let start = Instant::now();
-
+    let done_signal = done.clone();
     let handle = thread::spawn(move || {
-        while !done_clone.load(Ordering::Relaxed) {
-            parent.notify();
+        while !done_signal.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_micros(1));
+            parent.notify();
         }
     });
 
+    // On macOS (spin-wait), each wait() call that actually blocks sees
+    // the next notify within ~1µs (notifier's sleep interval). The total
+    // time divided by iterations gives a ballpark wakeup latency.
+    let iters = 5_000;
+    let start = Instant::now();
     for _ in 0..iters {
         child.wait(5000).expect("wait");
     }
-
     done.store(true, Ordering::Release);
     let elapsed = start.elapsed();
     handle.join().unwrap();
@@ -96,23 +96,20 @@ fn bench_notify_latency() {
 
 /// Simulates cross-process data transfer via Zinc shared memory.
 ///
-/// In real usage, the child handle lives in a separate process and reads
-/// the same physical pages — zero copy. This benchmark approximates that
-/// by writing data, notifying, and reading in the same thread (the data
-/// never moves — both handles point to the same mmap'd pages).
-fn bench_zinc_transfer(payload: usize) {
-    let payload = page_align(payload); // must be page-aligned on all platforms
-    let parent = create_region(NAME, payload);
+/// Both parent and child point to the same mmap'd pages.
+/// `nominal` is the logical payload size for display;
+/// `aligned` is the page-aligned region size used for create().
+fn bench_zinc_transfer(nominal: usize, aligned: usize) {
+    let parent = create_region(NAME, aligned);
     let child = open_region(NAME);
 
-    let iters = pick_iters(payload);
+    let iters = pick_iters(nominal); // use NOMINAL size for iteration count
+    let payload = aligned; // region size for write_bytes
 
     let start = Instant::now();
     for i in 0..iters {
-        // Writer writes payload to shared memory
         unsafe { std::ptr::write_bytes(parent.as_ptr(), (i % 256) as u8, payload) }
         parent.notify();
-        // Reader reads from the same shared memory — zero copy
         child.wait(5000).expect("wait");
         std::hint::black_box(unsafe { std::ptr::read(child.as_ptr()) });
     }
@@ -124,7 +121,7 @@ fn bench_zinc_transfer(payload: usize) {
         total_bytes / elapsed.as_secs_f64() / 1_000_000_000.0,
         elapsed,
         iters,
-        payload / 1024,
+        nominal / 1024,
         total_bytes / (1024 * 1024 * 1024) as f64,
     );
 
@@ -134,31 +131,33 @@ fn bench_zinc_transfer(payload: usize) {
 
 /// Simulates cross-process data transfer via Unix domain socket.
 ///
-/// Data must be copied through the kernel: write() copies from user to
-/// kernel buffer, read() copies from kernel to user buffer. Two kernel
-/// copies per transfer, plus syscall overhead.
-///
-/// Enlarges socket buffers so payload fits in the kernel pipe; falls
-/// back to concurrent writer + reader threads when that's not possible.
+/// Uses a persistent writer thread with a sync channel to avoid
+/// per-iteration thread spawn overhead. The rendezvous channel
+/// (sync_channel(0)) ensures write completes before main thread reads.
 fn bench_unix_transfer(payload: usize) {
     let (a, mut b) = UnixStream::pair().expect("socket pair");
     let iters = pick_iters(payload);
     let mut buf = vec![0u8; payload];
 
+    // Spawn one persistent writer thread
+    let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(1);
+    let mut writer = a.try_clone().expect("clone");
+    let w = thread::spawn(move || {
+        while let Ok(data) = rx.recv() {
+            writer.write_all(&data).expect("write");
+        }
+    });
+
     let start = Instant::now();
     for i in 0..iters {
         buf.fill(i as u8);
-        let chunk = buf.clone();
-        // Writer in separate thread so write to full kernel buffer (~8KB)
-        // doesn't deadlock waiting for read_exact in this thread.
-        let mut writer = a.try_clone().expect("clone");
-        let h = thread::spawn(move || {
-            writer.write_all(&chunk).expect("write");
-        });
+        // Send data to writer via rendezvous channel
+        tx.send(buf.clone()).expect("send");
         b.read_exact(&mut buf).expect("read");
         std::hint::black_box(buf[0]);
-        h.join().expect("join");
     }
+    drop(tx); // signal writer to stop
+    w.join().expect("join");
     let elapsed = start.elapsed();
     let total_bytes = payload as f64 * iters as f64;
 
@@ -172,11 +171,14 @@ fn bench_unix_transfer(payload: usize) {
     );
 }
 
+/// Returns iteration count for a given payload size in bytes.
+/// Uses the NOMINAL (un-aligned) payload size so both Zinc and socket
+/// benchmarks use consistent iteration counts for the same logical size.
 fn pick_iters(payload: usize) -> usize {
     match payload {
-        p if p <= 1024 => 100_000,     // 1 KB
-        p if p <= 65_536 => 10_000,    // 64 KB
-        p if p <= 1_048_576 => 1_000,  // 1 MB
-        _ => 100,                       // 10 MB+
+        p if p <= 1024 => 100_000,
+        p if p <= 65_536 => 10_000,
+        p if p <= 1_048_576 => 1_000,
+        _ => 100,
     }
 }
