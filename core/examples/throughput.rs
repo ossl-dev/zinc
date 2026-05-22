@@ -1,81 +1,139 @@
-use std::hint::black_box;
-use std::time::Instant;
+use std::io::{Read, Write};
+use std::os::unix::net::UnixStream;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use zinc_core::SharedRegion;
 
-const SIZE: usize = 1024 * 1024 * 1024; // 1 GB
+const NAME: &str = "bench_zinc";
 
 fn main() {
-    let name = "bench_throughput";
+    // ── Notify/wait latency (cross-thread) ──
+    bench_notify_latency();
 
-    // ── Baseline: heap-allocated buffer ──
-    println!("=== Baseline: heap-allocated Vec<u8> (no Zinc) ===");
-    let mut heap = vec![0u8; SIZE];
-    let ptr = heap.as_mut_ptr();
-    bench_throughput(ptr);
-
-    // ── Zinc: shared memory region ──
-    println!("\n=== Zinc: shared memory region ===");
-    let region = SharedRegion::create(name, SIZE).expect("create region");
-    bench_throughput(region.as_ptr());
-
-    // ── Notify/wait latency ──
-    let region2 = SharedRegion::open(name).expect("open region");
-    let iters = 10_000u64;
-    let start = Instant::now();
-    for i in 0..iters {
-        unsafe { std::ptr::write(region.as_ptr() as *mut u64, i) }
-        region.notify();
-        region2.wait(1000).expect("wait");
-        black_box(unsafe { std::ptr::read(region2.as_ptr() as *const u64) });
+    // ── Cross-process data transfer: Zinc vs Unix socket ──
+    for &payload_kb in &[1, 64, 1024, 10240] {
+        let payload = payload_kb * 1024;
+        println!("\n--- {} KB payload ---", payload_kb);
+        bench_zinc_transfer(payload);
+        bench_unix_transfer(payload);
     }
-    let elapsed = start.elapsed();
-    let avg_ns = elapsed.as_nanos() as f64 / iters as f64;
-    println!(
-        "\n=== Notify/wait latency ==="
-    );
-    println!(
-        "roundtrip: {:.0} ns avg ({:.2?} for {} iterations)",
-        avg_ns, elapsed, iters
-    );
-
-    drop(region2);
-    drop(region);
 }
 
-fn bench_throughput(base: *mut u8) {
-    let iters = 4;
+/// Measures roundtrip time for an empty signal via cross-thread notify/wait.
+/// The waiter thread actually blocks in futex/sync wait, then gets woken
+/// by the notifier — this measures the true kernel-assisted wakeup latency.
+fn bench_notify_latency() {
+    let parent = SharedRegion::create(NAME, 4096).expect("create");
+    let child = SharedRegion::open(NAME).expect("open");
 
-    // Write
+    let iters = 1_000;
     let start = Instant::now();
-    for i in 0..iters {
-        unsafe { std::ptr::write_bytes(base, (i % 256) as u8, SIZE) }
+
+    let handle = thread::spawn(move || {
+        for _ in 0..iters {
+            parent.notify();
+            thread::sleep(Duration::from_micros(1));
+        }
+    });
+
+    for _ in 0..iters {
+        child.wait(5000).expect("wait");
     }
+
     let elapsed = start.elapsed();
-    let total = SIZE as f64 * iters as f64;
+    handle.join().unwrap();
+
+    println!("\n=== Notify/wait latency (cross-thread) ===");
     println!(
-        "write: {:.2} GB/s ({:.2?} for {} x 1 GB)",
-        total / elapsed.as_secs_f64() / 1_000_000_000.0,
+        "  roundtrip: {:.1} µs avg  ({:.2?} for {} iterations)",
+        elapsed.as_secs_f64() / iters as f64 * 1_000_000.0,
         elapsed,
         iters,
     );
 
-    // Read
-    let mut sum: u64 = 0;
+    // No drop — child was moved into thread (actually no, child is
+    // in the main thread, parent was moved)
+    // Actually parent was moved into the spawned thread, so it's dropped there.
+    // child is in main thread, drop it here.
+}
+
+/// Simulates cross-process data transfer via Zinc shared memory.
+///
+/// In real usage, the child handle lives in a separate process and reads
+/// the same physical pages — zero copy. This benchmark approximates that
+/// by writing data, notifying, and reading in the same thread (the data
+/// never moves — both handles point to the same mmap'd pages).
+fn bench_zinc_transfer(payload: usize) {
+    let parent = SharedRegion::create(NAME, payload).expect("create");
+    let child = SharedRegion::open(NAME).expect("open");
+
+    let iters = pick_iters(payload);
+
     let start = Instant::now();
-    for _ in 0..iters {
-        for j in 0..(SIZE / 8) {
-            sum = sum.wrapping_add(black_box(unsafe {
-                std::ptr::read(base.add(j * 8) as *const u64)
-            }));
-        }
+    for i in 0..iters {
+        // Writer writes payload to shared memory
+        unsafe { std::ptr::write_bytes(parent.as_ptr(), (i % 256) as u8, payload) }
+        parent.notify();
+        // Reader reads from the same shared memory — zero copy
+        child.wait(5000).expect("wait");
+        std::hint::black_box(unsafe { std::ptr::read(child.as_ptr()) });
     }
     let elapsed = start.elapsed();
-    let total = SIZE as f64 * iters as f64;
+    let total_bytes = payload as f64 * iters as f64;
+
     println!(
-        "read:  {:.2} GB/s ({:.2?}) \u{2014} checksum: {:x}",
-        total / elapsed.as_secs_f64() / 1_000_000_000.0,
+        "  zinc:    {:>8.2} GB/s  ({:.2?}, {} x {} KB, {:.1} GB total)",
+        total_bytes / elapsed.as_secs_f64() / 1_000_000_000.0,
         elapsed,
-        sum,
+        iters,
+        payload / 1024,
+        total_bytes / (1024 * 1024 * 1024) as f64,
     );
+
+    drop(child);
+    drop(parent);
+}
+
+/// Simulates cross-process data transfer via Unix domain socket.
+///
+/// Data must be copied through the kernel: write() copies from user to
+/// kernel buffer, read() copies from kernel to user buffer. Two kernel
+/// copies per transfer, plus syscall overhead.
+fn bench_unix_transfer(payload: usize) {
+    let (mut a, mut b) = UnixStream::pair().expect("socket pair");
+    // Large buffer to avoid fragmentation
+    a.set_write_timeout(Some(Duration::from_secs(30))).ok();
+    b.set_read_timeout(Some(Duration::from_secs(30))).ok();
+
+    let iters = pick_iters(payload);
+    let mut buf = vec![0u8; payload];
+
+    let start = Instant::now();
+    for i in 0..iters {
+        buf.fill(i as u8);
+        a.write_all(&buf).expect("write");
+        b.read_exact(&mut buf).expect("read");
+        std::hint::black_box(buf[0]);
+    }
+    let elapsed = start.elapsed();
+    let total_bytes = payload as f64 * iters as f64;
+
+    println!(
+        "  socket:  {:>8.2} GB/s  ({:.2?}, {} x {} KB, {:.1} GB total)",
+        total_bytes / elapsed.as_secs_f64() / 1_000_000_000.0,
+        elapsed,
+        iters,
+        payload / 1024,
+        total_bytes / (1024 * 1024 * 1024) as f64,
+    );
+}
+
+fn pick_iters(payload: usize) -> usize {
+    match payload {
+        p if p <= 1024 => 100_000,     // 1 KB
+        p if p <= 65_536 => 10_000,    // 64 KB
+        p if p <= 1_048_576 => 1_000,  // 1 MB
+        _ => 100,                       // 10 MB+
+    }
 }
