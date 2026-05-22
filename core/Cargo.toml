@@ -8,9 +8,6 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
 thiserror = "2"
-memmap2 = "0.9"
-parking_lot = "0.12"
-crossbeam-utils = "0.8"
 libc = "0.2"
 
 [build-dependencies]

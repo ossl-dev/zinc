@@ -3,7 +3,7 @@ import { join } from "path";
 
 const libPath = join(
   import.meta.dir,
-  `../../core/target/release/libzinc_core.${suffix}`,
+  `../../../core/target/release/libzinc_core.${suffix}`,
 );
 
 const lib = dlopen(libPath, {

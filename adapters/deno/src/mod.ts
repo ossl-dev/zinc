@@ -8,7 +8,7 @@ const suffix = {
 
 const libPath = join(
   import.meta.dirname!,
-  `../../core/target/release/libzinc_core.${suffix}`,
+  `../../../core/target/release/libzinc_core.${suffix}`,
 );
 
 const lib = Deno.dlopen(libPath, {

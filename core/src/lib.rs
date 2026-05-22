@@ -121,3 +121,50 @@ pub extern "C" fn zinc_wait(h: ZincHandle, timeout_ms: u32) -> i32 {
 pub extern "C" fn zinc_version() -> u32 {
     (header::VERSION as u32) << 16 | 0x0001
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ptr;
+
+    #[test]
+    fn zinc_create_open_close() {
+        let name = b"test_cabi\0".as_ptr() as *const c_char;
+        let mut handle: ZincHandle = ptr::null_mut();
+        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize };
+
+        let code = zinc_create(name, page, &mut handle);
+        assert_eq!(code, 0, "zinc_create failed: {code}");
+        assert!(!handle.is_null());
+
+        let ptr = zinc_ptr(handle);
+        assert!(!ptr.is_null());
+        let cap = zinc_capacity(handle);
+        assert_eq!(cap, page);
+
+        // Open second handle
+        let mut handle2: ZincHandle = ptr::null_mut();
+        let code = zinc_open(name, &mut handle2);
+        assert_eq!(code, 0, "zinc_open failed: {code}");
+        assert!(!handle2.is_null());
+
+        zinc_close(handle2);
+        zinc_close(handle);
+    }
+
+    #[test]
+    fn zinc_null_handle_safety() {
+        let ptr = zinc_ptr(ptr::null_mut());
+        assert!(ptr.is_null());
+        let cap = zinc_capacity(ptr::null_mut());
+        assert_eq!(cap, 0);
+        zinc_notify(ptr::null_mut()); // should not crash
+        zinc_close(ptr::null_mut()); // should not crash
+    }
+
+    #[test]
+    fn zinc_version_check() {
+        let v = zinc_version();
+        assert!(v > 0);
+    }
+}

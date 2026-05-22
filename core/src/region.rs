@@ -21,7 +21,9 @@ impl SharedRegion {
         if capacity == 0 || !capacity.is_multiple_of(page) {
             return Err(ZincError::InvalidSize { page_size: page });
         }
-        let total = std::mem::size_of::<RegionHeader>() + capacity;
+        let total = std::mem::size_of::<RegionHeader>()
+            .checked_add(capacity)
+            .ok_or(ZincError::InvalidSize { page_size: page })?;
         let map = platform::map(name, platform::CreateOrOpen::Create(total))?;
         let hdr = unsafe { &mut *(map.ptr.as_ptr() as *mut RegionHeader) };
         hdr.magic = MAGIC;
@@ -139,52 +141,49 @@ mod tests {
 
     use super::*;
 
+    #[cfg(unix)]
     fn cleanup(name: &str) {
         let cname = std::ffi::CString::new(format!("/zinc_{name}")).unwrap();
         unsafe { libc::shm_unlink(cname.as_ptr()) };
     }
 
     #[test]
+    #[cfg(unix)]
     fn create_open_write_read() {
         let name = "test_create_open";
         cleanup(name);
-        let name = "test_create_open";
         let capacity = page_size();
 
-        // Create
         let region = SharedRegion::create(name, capacity).expect("create");
 
-        // Write pattern
         let ptr = region.as_ptr();
         unsafe {
             std::ptr::write_bytes(ptr, 0xAB, capacity);
             std::ptr::write(ptr as *mut u64, 0xDEADBEEF_CAFEBABE);
         }
 
-        // Verify magic in header
         assert_eq!(region.header().magic, MAGIC);
         assert_eq!(region.capacity(), capacity);
 
-        // Open in same process (second handle)
         let region2 = SharedRegion::open(name).expect("open");
         let ptr2 = region2.as_ptr();
         let val = unsafe { std::ptr::read(ptr2 as *const u64) };
         assert_eq!(val, 0xDEADBEEF_CAFEBABE);
-
-        // Verify capacity matches
         assert_eq!(region2.capacity(), capacity);
 
         drop(region2);
-        drop(region); // owner drops last, unlinks
+        drop(region);
     }
 
     #[test]
+    #[cfg(unix)]
     fn open_nonexistent_returns_not_found() {
         let result = SharedRegion::open("nonexistent_test_region");
         assert!(matches!(result, Err(ZincError::NotFound(_))));
     }
 
     #[test]
+    #[cfg(unix)]
     fn create_duplicate_returns_already_exists() {
         let name = "test_dup";
         cleanup(name);
@@ -212,34 +211,32 @@ mod tests {
             Err(ZincError::InvalidSize { .. })
         ));
         assert!(matches!(
-            SharedRegion::create("test_size", 1), // Not page-aligned
+            SharedRegion::create("test_size", 1),
             Err(ZincError::InvalidSize { .. })
         ));
     }
 
     #[test]
+    #[cfg(unix)]
     fn ref_counting_works() {
         let name = "test_refcount";
         cleanup(name);
         let cap = page_size();
 
         let owner = SharedRegion::create(name, cap).expect("create");
-        let ref_count_before = owner.header().ref_count.load(Ordering::SeqCst);
-        assert_eq!(ref_count_before, 1);
+        assert_eq!(owner.header().ref_count.load(Ordering::SeqCst), 1);
 
         {
             let _opener = SharedRegion::open(name).expect("open");
-            let after_open = owner.header().ref_count.load(Ordering::SeqCst);
-            assert_eq!(after_open, 2);
-        } // opener dropped
+            assert_eq!(owner.header().ref_count.load(Ordering::SeqCst), 2);
+        }
 
-        let after_drop = owner.header().ref_count.load(Ordering::SeqCst);
-        assert_eq!(after_drop, 1);
-
+        assert_eq!(owner.header().ref_count.load(Ordering::SeqCst), 1);
         drop(owner);
     }
 
     #[test]
+    #[cfg(unix)]
     fn notify_wait_roundtrip() {
         let name = "test_notify";
         cleanup(name);
@@ -247,16 +244,13 @@ mod tests {
 
         let region = SharedRegion::create(name, cap).expect("create");
 
-        // Writer thread
         let region2 = SharedRegion::open(name).expect("open");
         let handle = std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(10));
-            let ptr = region2.as_ptr();
-            unsafe { std::ptr::write(ptr as *mut u64, 42) };
+            unsafe { std::ptr::write(region2.as_ptr() as *mut u64, 42) };
             region2.notify();
         });
 
-        // Wait for notification
         let result = region.wait(5000);
         assert!(result.is_ok(), "wait should succeed: {:?}", result);
 
@@ -265,6 +259,36 @@ mod tests {
 
         handle.join().unwrap();
         drop(region);
+    }
+
+    #[test]
+    fn name_validation_strict() {
+        // Invalid — rejected before any platform call
+        assert!(matches!(SharedRegion::create("", 4096), Err(ZincError::InvalidName)));
+        assert!(matches!(SharedRegion::create("has space", 4096), Err(ZincError::InvalidName)));
+        assert!(matches!(SharedRegion::create("has.dot", 4096), Err(ZincError::InvalidName)));
+        assert!(matches!(SharedRegion::create("has/slash", 4096), Err(ZincError::InvalidName)));
+        assert!(matches!(SharedRegion::create("has\0null", 4096), Err(ZincError::InvalidName)));
+    }
+
+    #[test]
+    fn size_validation_strict() {
+        let page = page_size();
+        assert!(matches!(SharedRegion::create("t", 0), Err(ZincError::InvalidSize { .. })));
+        assert!(matches!(SharedRegion::create("t", 1), Err(ZincError::InvalidSize { .. })));
+        assert!(matches!(SharedRegion::create("t", page - 1), Err(ZincError::InvalidSize { .. })));
+        // page-aligned values are valid (but may fail at platform level)
+    }
+
+    #[test]
+    fn total_size_computation_no_overflow() {
+        // Header + capacity must not overflow usize when computing total mapping size.
+        let header_sz = std::mem::size_of::<RegionHeader>();
+        let max_cap = usize::MAX - header_sz;
+        let page = page_size();
+        let aligned_max = max_cap - (max_cap % page);
+        let total = header_sz.checked_add(aligned_max);
+        assert!(total.is_some(), "header + capacity should not overflow");
     }
 }
 

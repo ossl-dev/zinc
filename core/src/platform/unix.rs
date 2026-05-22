@@ -17,7 +17,7 @@ pub(crate) fn map(name: &str, mode: CreateOrOpen) -> Result<MappedFile> {
                 libc::shm_open(
                     cname.as_ptr(),
                     libc::O_CREAT | libc::O_EXCL | libc::O_RDWR,
-                    (libc::S_IRUSR | libc::S_IWUSR) as libc::c_int,
+                    (libc::S_IRUSR | libc::S_IWUSR) as libc::c_uint,
                 )
             };
             if fd < 0 {

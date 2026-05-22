@@ -44,6 +44,7 @@ pub fn wait(addr: &AtomicU32, expected: u32, timeout_ms: u32) -> Result<()> {
             }
             return Err(crate::ZincError::Platform(err));
         }
+        Ok(())
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -66,5 +67,53 @@ pub fn wait(addr: &AtomicU32, expected: u32, timeout_ms: u32) -> Result<()> {
                 std::hint::spin_loop();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicU32;
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn notify_wait_same_thread() {
+        let seq = AtomicU32::new(0);
+        let expected = seq.load(Ordering::Acquire);
+        thread::scope(|s| {
+            s.spawn(|| {
+                thread::sleep(Duration::from_millis(5));
+                notify(&seq);
+            });
+            let result = wait(&seq, expected, 5000);
+            assert!(result.is_ok(), "wait should succeed: {:?}", result);
+        });
+    }
+
+    #[test]
+    fn wait_timeout() {
+        let seq = AtomicU32::new(0);
+        let expected = seq.load(Ordering::Acquire);
+        let result = wait(&seq, expected, 10);
+        assert!(matches!(result, Err(crate::ZincError::TimedOut)));
+    }
+
+    #[test]
+    fn notify_before_wait_returns_immediately() {
+        let seq = AtomicU32::new(0);
+        notify(&seq); // seq now 1
+        // wait with expected=0 sees seq=1, returns immediately
+        let result = wait(&seq, 0, 1000);
+        assert!(result.is_ok(), "wait should return immediately, got: {:?}", result);
+    }
+
+    #[test]
+    fn multiple_notifies() {
+        let seq = AtomicU32::new(0);
+        for _ in 0..5 {
+            notify(&seq);
+        }
+        assert_eq!(seq.load(Ordering::Acquire), 5);
     }
 }
