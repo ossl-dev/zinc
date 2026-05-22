@@ -1,11 +1,33 @@
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use zinc_core::SharedRegion;
 
 const NAME: &str = "bench_zinc";
+
+fn page_align(size: usize) -> usize {
+    let page = page_size();
+    (size + page - 1) & !(page - 1)
+}
+
+fn page_size() -> usize {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        libc::sysconf(libc::_SC_PAGESIZE) as usize
+    }
+    #[cfg(target_os = "linux")]
+    unsafe {
+        libc::sysconf(libc::_SC_PAGESIZE) as usize
+    }
+    #[cfg(windows)]
+    {
+        4096
+    }
+}
 
 fn main() {
     // ── Notify/wait latency (cross-thread) ──
@@ -21,17 +43,19 @@ fn main() {
 }
 
 /// Measures roundtrip time for an empty signal via cross-thread notify/wait.
-/// The waiter thread actually blocks in futex/sync wait, then gets woken
-/// by the notifier — this measures the true kernel-assisted wakeup latency.
+/// Notifier thread runs continuously (every 1 µs) until main thread finishes.
+/// This prevents the race where the notifier finishes before the waiter catches up.
 fn bench_notify_latency() {
-    let parent = SharedRegion::create(NAME, 4096).expect("create");
+    let parent = SharedRegion::create(NAME, page_align(4096)).expect("create");
     let child = SharedRegion::open(NAME).expect("open");
+    let done = Arc::new(AtomicBool::new(false));
+    let done_clone = done.clone();
 
-    let iters = 1_000;
+    let iters = 5_000;
     let start = Instant::now();
 
     let handle = thread::spawn(move || {
-        for _ in 0..iters {
+        while !done_clone.load(Ordering::Relaxed) {
             parent.notify();
             thread::sleep(Duration::from_micros(1));
         }
@@ -41,6 +65,7 @@ fn bench_notify_latency() {
         child.wait(5000).expect("wait");
     }
 
+    done.store(true, Ordering::Release);
     let elapsed = start.elapsed();
     handle.join().unwrap();
 
@@ -51,11 +76,6 @@ fn bench_notify_latency() {
         elapsed,
         iters,
     );
-
-    // No drop — child was moved into thread (actually no, child is
-    // in the main thread, parent was moved)
-    // Actually parent was moved into the spawned thread, so it's dropped there.
-    // child is in main thread, drop it here.
 }
 
 /// Simulates cross-process data transfer via Zinc shared memory.
@@ -65,6 +85,7 @@ fn bench_notify_latency() {
 /// by writing data, notifying, and reading in the same thread (the data
 /// never moves — both handles point to the same mmap'd pages).
 fn bench_zinc_transfer(payload: usize) {
+    let payload = page_align(payload); // must be page-aligned on all platforms
     let parent = SharedRegion::create(NAME, payload).expect("create");
     let child = SharedRegion::open(NAME).expect("open");
 
