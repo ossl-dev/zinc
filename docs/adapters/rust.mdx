@@ -1,0 +1,137 @@
+---
+title: "Rust Adapter"
+description: "Use Zinc from Rust with the zinc-core crate"
+---
+
+The Rust adapter is the canonical API. `SharedRegion` lives in the core crate and exports directly for Rust projects.
+
+## Installation
+
+```bash
+cargo add zinc-core
+```
+
+If you are developing against a local copy of Zinc:
+
+```bash
+cargo add zinc-core --path /path/to/zinc/core
+```
+
+## SharedRegion
+
+```rust
+use zinc_core::SharedRegion;
+```
+
+### create
+
+Creates a new region. The `name` must match `[a-zA-Z0-9_-]+`. The `capacity` must be a multiple of the system page size (typically 4096).
+
+```rust
+let region = SharedRegion::create("my-data", 4096)?;
+```
+
+Returns `Ok(SharedRegion)` on success, or `Err(ZincError)`.
+
+### open
+
+Opens an existing region by name. Validates the header magic and version.
+
+```rust
+let region = SharedRegion::open("my-data")?;
+```
+
+### as_ptr
+
+Returns a raw `*mut u8` pointing to the data area (first byte after the 64-byte header).
+
+```rust
+let ptr = region.as_ptr();
+unsafe { *ptr = 42 };
+```
+
+### capacity
+
+Returns the usable size in bytes.
+
+```rust
+let cap = region.capacity();
+```
+
+### notify
+
+Atomically increments the notification sequence counter and wakes all waiters.
+
+```rust
+region.notify();
+```
+
+### wait
+
+Blocks until the notification counter changes, or the timeout expires.
+
+```rust
+match region.wait(1000) {
+    Ok(()) => println!("data available"),
+    Err(ZincError::TimedOut) => println!("no update within 1s"),
+    Err(e) => eprintln!("error: {e}"),
+}
+```
+
+Returns `Ok(())` on notification, `Err(ZincError::TimedOut)` on timeout, or `Err(ZincError)` for other errors.
+
+### Drop
+
+Regions close automatically when `SharedRegion` drops. If the handle is the owner and no other handles are open, the shared memory segment gets unlinked.
+
+```rust
+{
+    let region = SharedRegion::create("temp", 4096)?;
+    // region is active here
+}
+// region is closed and unlinked
+```
+
+## Example: producer-consumer
+
+```rust
+use zinc_core::SharedRegion;
+use std::thread;
+use std::time::Duration;
+
+// Producer
+let producer = thread::spawn(|| -> Result<(), zinc_core::ZincError> {
+    let r = SharedRegion::create("pipeline", 65536)?;
+    let ptr = r.as_ptr();
+    for i in 0..10 {
+        unsafe { std::ptr::write(ptr as *mut u64, i); }
+        r.notify();
+        thread::sleep(Duration::from_millis(10));
+    }
+    Ok(())
+});
+
+// Consumer
+let consumer = thread::spawn(|| -> Result<(), zinc_core::ZincError> {
+    let r = SharedRegion::open("pipeline")?;
+    let ptr = r.as_ptr() as *const u64;
+    loop {
+        match r.wait(5000) {
+            Ok(()) => {
+                let val = unsafe { std::ptr::read(ptr) };
+                println!("received: {val}");
+            }
+            Err(zinc_core::ZincError::TimedOut) => break,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+});
+
+producer.join().unwrap()?;
+consumer.join().unwrap()?;
+```
+
+## Working with the header
+
+`RegionHeader` is exported for advanced use but you rarely need it. It lives at the base of mapped memory and you can access it with unsafe pointer arithmetic. `SharedRegion` covers most use cases.

@@ -1,0 +1,219 @@
+---
+title: "Writing and Reading Data"
+description: "How to read and write data in shared memory from any language"
+---
+
+Once a region is created or opened, reading and writing data is a matter of pointer arithmetic on the data area. The first byte of usable data is at offset 64 (after the header).
+
+## Getting a pointer to the data area
+
+Every adapter provides a method that returns a view of the shared memory:
+
+<CodeGroup>
+  ```rust Rust
+  // Returns *mut u8 pointing to data area
+  let ptr = region.as_ptr();
+  ```
+
+  ```python Python
+  # Returns a memoryview backed by the mmap
+  buf = region.as_buffer()
+
+  # Returns a numpy ndarray (zero-copy)
+  arr = region.as_numpy(dtype=np.float32)
+  ```
+
+  ```go Go
+  // Returns a []byte backed by the mmap
+  data := region.Bytes()
+  ```
+
+  ```typescript Node.js
+  // Returns a Node.js Buffer backed by the mmap
+  const buf = region.asBuffer();
+  ```
+
+  ```typescript Bun
+  // Returns a Buffer backed by the mmap
+  const buf = region.buffer();
+  ```
+
+  ```typescript Deno
+  // Returns a Uint8Array backed by the mmap
+  const buf = region.buffer();
+  ```
+
+  ```cpp C++
+  // Returns a std::span<std::byte> backed by the mmap
+  auto bytes = region.bytes();
+  ```
+
+  ```java Java
+  // Returns a ByteBuffer backed by the mmap
+  ByteBuffer buf = region.buffer();
+  ```
+
+  ```csharp C#
+  // Returns a Span<byte> backed by the mmap
+  Span<byte> bytes = region.Bytes();
+  ```
+</CodeGroup>
+
+The returned view is a direct mapping into physical memory. Writing to it is immediately visible to all other processes that have the same region open. No flush, no commit, no sync.
+
+## Writing primitive values
+
+<CodeGroup>
+  ```rust Rust
+  unsafe { std::ptr::write(ptr as *mut u32, 42) };
+  unsafe { std::ptr::write(ptr.add(4) as *mut f32, 3.14) };
+  ```
+
+  ```python Python
+  import struct
+  buf[:4] = struct.pack('<I', 42)
+  buf[4:8] = struct.pack('<f', 3.14)
+  ```
+
+  ```go Go
+  binary.LittleEndian.PutUint32(data[0:4], 42)
+  binary.LittleEndian.PutUint32(data[4:8], math.Float32bits(3.14))
+  ```
+
+  ```typescript Node.js
+  buf.writeUint32LE(42, 0);
+  buf.writeFloatLE(3.14, 4);
+  ```
+
+  ```typescript Bun
+  buf.writeUint32LE(42, 0);
+  buf.writeFloatLE(3.14, 4);
+  ```
+
+  ```cpp C++
+  *reinterpret_cast<uint32_t*>(bytes.data()) = 42;
+  *reinterpret_cast<float*>(bytes.data() + 4) = 3.14f;
+  ```
+
+  ```java Java
+  buf.putInt(0, 42);
+  buf.putFloat(4, 3.14f);
+  ```
+
+  ```csharp C#
+  BinaryPrimitives.WriteUInt32LittleEndian(bytes, 42);
+  BinaryPrimitives.WriteSingleLittleEndian(bytes[4..], 3.14f);
+  ```
+</CodeGroup>
+
+## Writing arrays and buffers
+
+The most common use case for Zinc is sharing large arrays — tensors, frames, point clouds. Here is how to write and read a float array:
+
+<CodeGroup>
+  ```rust Rust
+  let data: &[f32] = &[1.0, 2.0, 3.0, 4.0];
+  let n_bytes = data.len() * std::mem::size_of::<f32>();
+  unsafe {
+      std::ptr::copy_nonoverlapping(
+          data.as_ptr() as *const u8,
+          ptr,
+          n_bytes,
+      );
+  }
+  ```
+
+  ```python Python
+  arr = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32)
+  region.as_buffer()[:arr.nbytes] = arr.tobytes()
+
+  # Or use as_numpy for a two-way view:
+  view = region.as_numpy(dtype=np.float32)
+  view[:4] = [1.0, 2.0, 3.0, 4.0]  # writes directly to shared memory
+  ```
+
+  ```go Go
+  arr := []float32{1.0, 2.0, 3.0, 4.0}
+  for i, v := range arr {
+      binary.LittleEndian.PutUint32(data[i*4:], math.Float32bits(v))
+  }
+  ```
+
+  ```typescript Node.js
+  const arr = new Float32Array([1.0, 2.0, 3.0, 4.0]);
+  // Node.js Buffer can be constructed from the mmap-backed buffer
+  const dst = new Float32Array(buf.buffer, buf.byteOffset, 4);
+  dst.set(arr);
+  ```
+
+  ```cpp C++
+  std::vector<float> src = {1.0f, 2.0f, 3.0f, 4.0f};
+  std::memcpy(bytes.data(), src.data(), src.size() * sizeof(float));
+  ```
+
+  ```java Java
+  float[] src = {1.0f, 2.0f, 3.0f, 4.0f};
+  buf.asFloatBuffer().put(src);
+  ```
+
+  ```csharp C#
+  float[] src = [1.0f, 2.0f, 3.0f, 4.0f];
+  MemoryMarshal.Cast<float, byte>(src).CopyTo(bytes);
+  ```
+</CodeGroup>
+
+## Memory layout conventions
+
+Zinc does not impose a data format. Bytes at offset 64 and beyond are yours to manage. For polyglot setups where multiple languages read and write the same region, you need a layout convention.
+
+Common approaches:
+
+- **Fixed offset fields.** Assign each field a fixed position: strings as fixed-size byte arrays, numbers at known offsets, arrays at known offsets with a length prefix.
+- **Schema-driven layout.** Use a zero-copy serialization framework like FlatBuffers or Cap'n Proto that operates on shared memory directly.
+- **Header + data.** Write a small descriptor at the start of the data area describing the number and types of the remaining fields.
+
+The simplest approach is a fixed layout with explicit offsets. Not flexible, but trivially correct in every language.
+
+## Capacity
+
+The `capacity` value represents usable bytes after the 64-byte header. It is set at creation time and cannot be changed. The value must be a multiple of the system page size (typically 4096 bytes).
+
+To determine the capacity:
+
+<CodeGroup>
+  ```rust Rust
+  let cap = region.capacity();
+  ```
+
+  ```python Python
+  cap = len(region.as_buffer())
+  ```
+
+  ```go Go
+  cap := len(region.Bytes())
+  ```
+
+  ```typescript Node.js
+  const cap = buf.length;
+  ```
+
+  ```typescript Bun
+  const cap = buf.length;
+  ```
+
+  ```typescript Deno
+  const cap = buf.length;
+  ```
+
+  ```cpp C++
+  auto cap = region.capacity();
+  ```
+
+  ```java Java
+  long cap = region.buffer().capacity();
+  ```
+
+  ```csharp C#
+  int cap = region.Bytes().Length;
+  ```
+</CodeGroup>

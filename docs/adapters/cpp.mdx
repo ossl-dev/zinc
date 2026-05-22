@@ -1,0 +1,142 @@
+---
+title: "C++ Adapter"
+description: "Use Zinc from C++ with a header-only RAII wrapper"
+---
+
+The C++ adapter is a header-only library that wraps the C ABI in RAII types and `std::span`. No separate build step is required.
+
+## Installation
+
+Copy `zinc.hpp` into your project:
+
+```bash
+cp adapters/cpp/include/zinc.hpp /your/project/include/
+```
+
+Link against `libzinc_core` at build time:
+
+```bash
+# Linux
+g++ -std=c++20 -o myapp myapp.cpp -lzinc_core -L/path/to/core/target/release
+
+# macOS
+clang++ -std=c++20 -o myapp myapp.cpp -lzinc_core -L/path/to/core/target/release
+```
+
+## SharedRegion
+
+```cpp
+#include "zinc.hpp"
+
+using namespace zinc;
+```
+
+### create
+
+```cpp
+auto region = SharedRegion::create("my-data", 4096);
+```
+
+Creates a new region. Throws `std::system_error` on failure. The error code maps to the negated Zinc error code.
+
+### open
+
+```cpp
+auto region = SharedRegion::open("my-data");
+```
+
+Opens an existing region.
+
+### bytes
+
+Returns a `std::span<std::byte>` backed by the shared memory mapping. No copying occurs.
+
+```cpp
+auto bytes = region.bytes();
+*reinterpret_cast<float*>(bytes.data()) = 3.14f;
+auto val = *reinterpret_cast<const float*>(bytes.data());
+```
+
+A const overload is available for read-only access:
+
+```cpp
+const auto& const_region = region;
+auto read_only = const_region.bytes();
+```
+
+### capacity
+
+```cpp
+auto cap = region.capacity();
+```
+
+### notify
+
+```cpp
+region.notify();
+```
+
+### wait
+
+```cpp
+bool ok = region.wait(1000);
+```
+
+Returns `true` on notification, `false` on timeout.
+
+### RAII semantics
+
+`SharedRegion` is move-only. It cannot be copied. The handle closes automatically when it goes out of scope.
+
+```cpp
+{
+    auto region = SharedRegion::create("temp", 4096);
+    // region is active here
+}
+// region is automatically closed and (if owner) unlinked
+```
+
+```cpp
+// Move ownership
+auto a = SharedRegion::open("my-data");
+auto b = std::move(a);
+// 'a' is now empty, 'b' owns the handle
+```
+
+## Complete example
+
+```cpp
+#include "zinc.hpp"
+#include <iostream>
+#include <thread>
+
+int main() {
+    // Writer thread
+    std::thread writer([] {
+        auto region = zinc::SharedRegion::create("cpp-channel", 4096);
+        auto bytes = region.bytes();
+        *reinterpret_cast<uint64_t*>(bytes.data()) = 42;
+        region.notify();
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+    });
+
+    // Reader thread
+    std::thread reader([] {
+        auto region = zinc::SharedRegion::open("cpp-channel");
+        if (region.wait(5000)) {
+            auto bytes = region.bytes();
+            auto val = *reinterpret_cast<const uint64_t*>(bytes.data());
+            std::cout << "read: " << val << "\n"; // 42
+        }
+    });
+
+    writer.join();
+    reader.join();
+}
+```
+
+## Requirements
+
+- C++20 or later (for `std::span`)
+- A C++ compiler that supports `std::span` (GCC 10+, Clang 7+, MSVC 2019 16.10+)
+- The `zinc_core` shared library on the library search path at runtime

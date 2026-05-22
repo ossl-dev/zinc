@@ -1,0 +1,135 @@
+---
+title: "Go Adapter"
+description: "Use Zinc from Go with cgo"
+---
+
+The Go adapter uses cgo to call the Zinc C ABI directly. It returns a `[]byte` slice backed by the shared memory mapping.
+
+## Installation
+
+```bash
+go get github.com/aspect-build/zinc/adapters/go
+```
+
+The adapter needs the `zinc_core` shared library at runtime. Place it on the library search path or link it at build time.
+
+## SharedRegion
+
+```go
+import "zinc"
+```
+
+### Create
+
+```go
+region, err := zinc.Create("my-data", 4096)
+```
+
+Creates a new region. Returns an error if the region already exists or if the name or size is invalid.
+
+### Open
+
+```go
+region, err := zinc.Open("my-data")
+```
+
+Opens an existing region. Returns an error if the region does not exist.
+
+### Bytes
+
+Returns a `[]byte` slice backed directly by the shared memory mapping. No copying occurs.
+
+```go
+data := region.Bytes()
+// data is a []byte pointing into the mmap
+binary.LittleEndian.PutUint32(data[0:4], 42)
+```
+
+### Notify
+
+```go
+region.Notify()
+```
+
+### Wait
+
+```go
+ok := region.Wait(timeoutMs uint32) // returns bool
+```
+
+Returns `true` if notified, `false` if timed out.
+
+### Close
+
+```go
+region.Close()
+```
+
+## Complete example
+
+```go
+package main
+
+import (
+    "encoding/binary"
+    "fmt"
+    "math"
+    "time"
+    "zinc"
+)
+
+func main() {
+    // Create region
+    region, err := zinc.Create("sensor", 4096)
+    if err != nil {
+        panic(err)
+    }
+    defer region.Close()
+
+    // Write a float64
+    data := region.Bytes()
+    binary.LittleEndian.PutUint64(data[0:8], math.Float64bits(3.14159))
+
+    // Signal readers
+    region.Notify()
+
+    fmt.Println("wrote 3.14159, waiting...")
+    time.Sleep(5 * time.Second)
+}
+```
+
+Reader process:
+
+```go
+package main
+
+import (
+    "encoding/binary"
+    "fmt"
+    "math"
+    "zinc"
+)
+
+func main() {
+    region, err := zinc.Open("sensor")
+    if err != nil {
+        panic(err)
+    }
+    defer region.Close()
+
+    // Wait for data
+    if region.Wait(3000) {
+        data := region.Bytes()
+        val := math.Float64frombits(binary.LittleEndian.Uint64(data[0:8]))
+        fmt.Printf("read: %f\n", val)
+    }
+}
+```
+
+## Cgo flags
+
+The adapter uses `#cgo LDFLAGS: -lzinc_core -L${SRCDIR}/../../core/target/release` to locate the library during development. For production builds, ensure the library is on the system library path or pass `-L` and `-l` flags through `CGO_LDFLAGS`.
+
+## Safety
+
+The `Bytes()` call returns a Go slice pointing to C memory. Go's garbage collector does not manage this memory. The slice is valid as long as the `SharedRegion` handle is not closed. Calling `Close()` and then using the returned slice results in undefined behavior.

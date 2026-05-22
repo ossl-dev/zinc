@@ -1,0 +1,100 @@
+---
+title: "Platform Notes"
+description: "Platform-specific behavior, limitations, and differences"
+---
+
+Zinc supports Linux and macOS with full platform backends. Windows support is under development. This page documents the differences between platforms.
+
+## Linux
+
+Linux is the primary development platform and has the most complete backend.
+
+**Shared memory.** Regions are backed by POSIX shared memory objects created with `shm_open`. These appear as files in `/dev/shm/`:
+
+```bash
+ls -la /dev/shm/ | grep zinc_
+```
+
+The naming convention uses a `/zinc_` prefix. A region created with name `my-data` becomes `/dev/shm/zinc_my-data`.
+
+**Synchronization.** The notify/wait mechanism uses the `futex` syscall (`SYS_futex` with `FUTEX_WAIT` and `FUTEX_WAKE`). This is a kernel-assisted wait that parks the waiting thread until the futex word changes. Zero overhead when no one is waiting: the wake call returns immediately with the number of waiters woken (zero).
+
+**Limits.** The maximum number of shared memory segments is limited by `shmmax` and `shmall` kernel parameters:
+
+```bash
+# View current limits
+sysctl kernel.shmmax
+sysctl kernel.shmall
+
+# Typical values
+kernel.shmmax = 18446744073692774399  # effectively unlimited
+kernel.shmall = 18446744073692774399
+```
+
+The maximum segment size is 256GB by default on most distributions, adjustable via `shmmax`.
+
+**Cleanup.** Shared memory objects are reference counted by the kernel. An `shm_unlink` removes the name immediately, but the underlying memory is not freed until all processes unmap it. If a process crashes with an active mapping, the memory remains allocated until the process exits. On process exit, the kernel unmaps all mappings and decrements the reference count. If the object was unlinked and all mappings are gone, the memory is freed.
+
+## macOS
+
+macOS uses POSIX shared memory (`shm_open`) like Linux, with the same naming convention. The synchronization backend differs because `futex` is a Linux-only syscall.
+
+**Shared memory.** `shm_open` on macOS creates shared memory objects backed by kernel memory, not the filesystem. They do not appear in `/dev/shm/`. There is no direct equivalent of `ls /dev/shm/` to enumerate active regions.
+
+**Synchronization.** On macOS, `notify()` increments the atomic sequence counter but does not perform a kernel-assisted wake. The `wait()` function uses an adaptive spin loop:
+
+1. Spin 256 iterations with `spin_loop_hint` (PAUSE instruction on x86, WFE on ARM).
+2. Yield the thread with `std::thread::yield_now()`.
+3. Check for timeout.
+4. Repeat.
+
+This is less efficient than `futex` for long waits. A waiting thread consumes CPU while spinning. For typical use cases where the wait is short (microseconds to low milliseconds), the spin loop is adequate. For longer waits, reduce the timeout and retry, or implement your own waiting mechanism using `dispatch_semaphore` or `pthread_cond_t` in a cross-process shared memory region.
+
+**Future.** macOS has a private `ulock` API (`ulock_wait` / `ulock_wake`) that mirrors futex behavior. It is not public API and may break between macOS versions. A future version of Zinc may add a feature-gated `ulock` backend.
+
+**PIDs.** The `owner_pid` field in the header is set from `std::process::id()`, which on macOS returns the same value as `getpid()`. This is consistent with Linux behavior.
+
+## Windows
+
+The Windows backend is a stub. `zinc_create` and `zinc_open` return `Unsupported` errors. `unmap` and `unlink` are no-ops.
+
+The planned implementation uses `CreateFileMapping` and `MapViewOfFile` for shared memory, and Windows Event objects for synchronization.
+
+```c
+// Planned implementation sketch (not yet available)
+HANDLE hMap = CreateFileMappingA(
+    INVALID_HANDLE_VALUE,
+    NULL,
+    PAGE_READWRITE,
+    size >> 32,
+    size & 0xFFFFFFFF,
+    name
+);
+LPVOID ptr = MapViewOfFile(hMap, FILE_MAP_ALL_ACCESS, 0, 0, size);
+```
+
+**Priority.** Windows support is a known gap and is the next platform priority. Contributions are welcome.
+
+## Portable code patterns
+
+To write code that works identically on all platforms, follow these guidelines:
+
+**Allocate generous timeouts.** The Linux futex path is fast; the macOS spin loop is not. If your application needs to run on macOS without modification, use timeouts of at least 1 millisecond and expect the spin loop to consume CPU for the duration.
+
+**Handle timeout gracefully.** The `wait()` function returns `TimedOut` when no notification arrives. Always handle this case. On macOS, timeouts are detected by checking `start.elapsed()` in the spin loop. The resolution depends on the timer granularity, typically 1 microsecond or better.
+
+**Avoid platform-specific assumptions.** The `/dev/shm/` path is Linux-specific. Don't hardcode it or rely on enumerating shared memory objects for discovery. Use a separate coordination mechanism (a PID file, a socket, environment variables) to tell processes which region names to open.
+
+**Test on all target platforms.** The notify/wait behavior differs observably between Linux (zero CPU while waiting) and macOS (CPU proportional to wait duration). Test your synchronization pattern on every platform you deploy to.
+
+## Future roadmap
+
+| Feature | Status |
+|---------|--------|
+| Linux futex backend | Complete |
+| macOS adaptive wait | Complete |
+| macOS ulock backend | Planned |
+| Windows CreateFileMapping | Planned |
+| Windows Event sync | Planned |
+| Resource limits documentation | In progress |
+| Performance benchmarks per platform | In progress |

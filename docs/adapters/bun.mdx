@@ -1,0 +1,103 @@
+---
+title: "Bun Adapter"
+description: "Use Zinc from Bun with bun:ffi"
+---
+
+The Bun adapter uses Bun's built-in `bun:ffi` module to call the Zinc C ABI directly. No native addon compilation is needed. Bun loads `libzinc_core` at runtime through its FFI layer.
+
+## Installation
+
+```bash
+bun add @aspect-build/zinc-bun
+```
+
+Requires Bun 1.0 or later.
+
+## SharedRegion
+
+```typescript
+import { SharedRegion } from "zinc-bun";
+```
+
+### create
+
+```typescript
+const region = SharedRegion.create("my-data", 4096);
+```
+
+Creates a new region. Throws on failure.
+
+### open
+
+```typescript
+const region = SharedRegion.open("my-data");
+```
+
+Opens an existing region.
+
+### buffer
+
+Returns a `Buffer` backed by the shared memory mapping. Uses `bun:ffi`'s `toBuffer` function for zero-copy access.
+
+```typescript
+const buf = region.buffer();
+buf.writeFloatLE(3.14, 0);
+```
+
+### notify
+
+```typescript
+region.notify();
+```
+
+### wait
+
+```typescript
+const ok = region.wait(1000);
+```
+
+Returns `true` on notification, `false` on timeout.
+
+### close
+
+```typescript
+region.close();
+```
+
+The region also supports `Symbol.dispose` for `using` statements:
+
+```typescript
+{
+    using region = SharedRegion.open("my-data");
+    const buf = region.buffer();
+    // region is automatically closed when the block exits
+}
+```
+
+## Complete example
+
+```typescript
+import { SharedRegion } from "zinc-bun";
+
+// Writer
+const w = SharedRegion.create("bun-channel", 4096);
+const buf = w.buffer();
+buf.writeBigInt64LE(42n, 0);
+w.notify();
+
+setTimeout(() => w.close(), 5000);
+
+// Reader (separate process)
+const r = SharedRegion.open("bun-channel");
+if (r.wait(3000)) {
+    const data = r.buffer();
+    console.log(data.readBigInt64LE(0)); // 42n
+}
+r.close();
+```
+
+## FFI details
+
+The adapter defines FFI signatures for the 7 C ABI functions. Handles are represented as `BigInt` (64-bit pointers) in Bun's FFI type system. The `zinc_ptr` function returns a pointer that `toBuffer` wraps into a `Buffer` without copying.
+
+The library path is resolved relative to the adapter's installation directory. If the library is not found, ensure `libzinc_core.{so,dylib,dll}` is on the standard library path.

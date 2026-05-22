@@ -1,0 +1,81 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Zinc",
+  "colors": {
+    "primary": "#18181B",
+    "light": "#FAFAFA",
+    "dark": "#18181B"
+  },
+  "appearance": {
+    "default": "dark",
+    "strict": true
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Home",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "index",
+              "getting-started/installation",
+              "getting-started/quickstart",
+              "performance/benchmarks",
+              "getting-started/concepts"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/writing-data",
+              "guides/notify-wait",
+              "guides/lifecycle"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/c-abi",
+              "reference/error-codes",
+              "reference/header"
+            ]
+          },
+          {
+            "group": "Notes",
+            "pages": ["platform/notes"]
+          }
+        ]
+      },
+      {
+        "tab": "Adapters",
+        "groups": [
+          {
+            "group": "Language Adapters",
+            "pages": [
+              "adapters/rust",
+              "adapters/python",
+              "adapters/go",
+              "adapters/node",
+              "adapters/bun",
+              "adapters/deno",
+              "adapters/cpp",
+              "adapters/java",
+              "adapters/csharp"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Contributing",
+        "pages": ["contributing"]
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/aspect-build/zinc"
+    }
+  }
+}

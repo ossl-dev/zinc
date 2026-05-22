@@ -1,0 +1,124 @@
+---
+title: "Installation"
+description: "Build and install Zinc for your platform and language"
+---
+
+Zinc ships as a shared library (`libzinc_core`) with per-language adapter packages. Build the core, then install the adapter for your language. Same flow on every platform.
+
+## Prerequisites
+
+- Rust 1.82 or later
+- A C compiler toolchain (Xcode on macOS, build-essential on Linux, Visual Studio on Windows)
+- For adapter packages: the corresponding language runtime
+
+## Build the core
+
+The core library is a Rust crate at the `core/` directory. It compiles to a `cdylib` that every language adapter loads at runtime.
+
+```bash
+git clone https://github.com/aspect-build/zinc
+cd zinc
+cargo build --release --manifest-path core/Cargo.toml
+```
+
+The output appears at:
+
+- Linux: `core/target/release/libzinc_core.so`
+- macOS: `core/target/release/libzinc_core.dylib`
+- Windows: `core/target/release/zinc_core.dll`
+
+The build also generates `include/zinc.h` via cbindgen. This header is the C ABI contract. All adapters derive their FFI bindings from it.
+
+## By language
+
+<CodeGroup>
+  ```bash Rust
+  # Add zinc-core as a dependency
+  cargo add zinc-core --path /path/to/zinc/core
+
+  # Or from crates.io (once published)
+  cargo add zinc-core
+  ```
+
+  ```bash Python
+  pip install zinc-shm
+
+  # Or install from source
+  cd adapters/python
+  pip install -e .
+  ```
+
+  ```bash Go
+  go get github.com/aspect-build/zinc/adapters/go
+
+  # Or use a local path
+  # In go.mod: replace zinc => ./adapters/go
+  ```
+
+  ```bash Node.js
+  npm install @aspect-build/zinc
+  ```
+
+  ```bash Bun
+  bun add @aspect-build/zinc-bun
+  ```
+
+  ```bash Deno
+  deno add @aspect-build/zinc
+  ```
+
+  ```bash C++
+  # Header-only. Copy include/zinc.hpp into your project.
+  # Link against libzinc_core at build time.
+  ```
+
+  ```xml Java
+  <!-- Maven Central (pending) -->
+  <dependency>
+    <groupId>dev.zinc</groupId>
+    <artifactId>zinc-java</artifactId>
+    <version>0.1.0</version>
+  </dependency>
+  ```
+
+  ```bash C#
+  dotnet add package Zinc
+  ```
+</CodeGroup>
+
+## Library path
+
+All adapters expect `libzinc_core.{so,dylib,dll}` on the library search path. The easiest approach is to place the compiled library in a standard location:
+
+<CodeGroup>
+  ```bash Linux
+  sudo cp core/target/release/libzinc_core.so /usr/local/lib/
+  sudo ldconfig
+  ```
+
+  ```bash macOS
+  cp core/target/release/libzinc_core.dylib /usr/local/lib/
+  ```
+
+  ```bash Windows
+  copy core\target\release\zinc_core.dll C:\Windows\System32\
+  ```
+</CodeGroup>
+
+Alternatively, set the library path via `LD_LIBRARY_PATH` (Linux), `DYLD_LIBRARY_PATH` (macOS), or `PATH` (Windows).
+
+## Platform notes
+
+- **Linux** requires glibc 2.17 or later. The notify/wait backend uses the `futex` syscall.
+- **macOS** uses an adaptive spin-loop for wait (the `ulock` API is private on Darwin).
+- **Windows** currently provides a stub backend. Full `CreateFileMapping` support is in development.
+
+## Verify the installation
+
+Build the core, then run the C ABI test:
+
+```bash
+cargo test --manifest-path core/Cargo.toml
+```
+
+All tests should pass. On Linux and macOS, the full test suite runs. On Windows, tests that require `shm_open` are skipped.

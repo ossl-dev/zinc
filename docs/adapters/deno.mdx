@@ -1,0 +1,110 @@
+---
+title: "Deno Adapter"
+description: "Use Zinc from Deno with Deno.dlopen"
+---
+
+The Deno adapter uses `Deno.dlopen` to load the Zinc shared library. Like the Bun adapter, no native addon is needed. The FFI bindings are defined at runtime in TypeScript.
+
+## Installation
+
+```bash
+deno add @aspect-build/zinc
+```
+
+Requires Deno 1.33 or later with `--allow-ffi` and `--allow-read` permissions.
+
+## SharedRegion
+
+```typescript
+import { SharedRegion } from "@aspect-build/zinc";
+```
+
+### create
+
+```typescript
+const region = SharedRegion.create("my-data", 4096);
+```
+
+Creates a new region. Throws on failure.
+
+### open
+
+```typescript
+const region = SharedRegion.open("my-data");
+```
+
+Opens an existing region.
+
+### buffer
+
+Returns a `Uint8Array` backed by the shared memory mapping. Uses `Deno.UnsafePointerView.getArrayBuffer` for zero-copy access.
+
+```typescript
+const buf = region.buffer();
+const view = new DataView(buf.buffer);
+view.setFloat32(0, 3.14, true);
+```
+
+### notify
+
+```typescript
+region.notify();
+```
+
+### wait
+
+```typescript
+const ok = region.wait(1000);
+```
+
+Returns `true` on notification, `false` on timeout.
+
+### close
+
+```typescript
+region.close();
+```
+
+Supports `Symbol.dispose` for `using` declarations:
+
+```typescript
+using region = SharedRegion.open("my-data");
+const buf = region.buffer();
+```
+
+## Complete example
+
+```typescript
+import { SharedRegion } from "@aspect-build/zinc";
+
+// Writer
+const w = SharedRegion.create("deno-channel", 4096);
+const buf = w.buffer();
+const view = new DataView(buf.buffer);
+view.setFloat64(0, 2.71828, true);
+w.notify();
+
+setTimeout(() => w.close(), 5000);
+
+// Reader (separate process)
+const r = SharedRegion.open("deno-channel");
+if (r.wait(3000)) {
+    const data = r.buffer();
+    const v = new DataView(data.buffer);
+    console.log(v.getFloat64(0, true)); // 2.71828
+}
+r.close();
+```
+
+## Permissions
+
+The adapter requires these Deno permissions:
+
+- `--allow-ffi` to call `Deno.dlopen`
+- `--allow-read` to locate the shared library
+
+Without these, the import will fail with a permission error.
+
+## FFI details
+
+The library path is resolved relative to the adapter's Deno module location. The suffix is determined from `Deno.build.os`: `.dylib` on macOS, `.so` on Linux, `.dll` on Windows. Pointer values are represented as `Deno.PointerValue` (which is `number | null` on 32-bit and `bigint | null` on 64-bit).

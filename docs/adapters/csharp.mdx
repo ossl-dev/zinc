@@ -1,0 +1,127 @@
+---
+title: "C# Adapter"
+description: "Use Zinc from C# with P/Invoke"
+---
+
+The C# adapter uses P/Invoke (Platform Invocation Services) to call the Zinc C ABI. It provides a safe `Span<byte>` wrapper over the shared memory mapping.
+
+## Installation
+
+```bash
+dotnet add package Zinc
+```
+
+Requires .NET 6 or later.
+
+## SharedRegion
+
+```csharp
+using Zinc;
+```
+
+### Create
+
+```csharp
+var region = SharedRegion.Create("my-data", (nuint)4096);
+```
+
+Creates a new region. Throws `InvalidOperationException` on failure.
+
+### Open
+
+```csharp
+var region = SharedRegion.Open("my-data");
+```
+
+Opens an existing region.
+
+### Bytes
+
+Returns a `Span<byte>` backed by the shared memory mapping. No copying occurs.
+
+```csharp
+Span<byte> bytes = region.Bytes();
+BitConverter.GetBytes(3.14f).CopyTo(bytes);
+float val = BitConverter.ToSingle(bytes);
+```
+
+### Notify
+
+```csharp
+region.Notify();
+```
+
+### Wait
+
+```csharp
+bool ok = region.Wait(timeoutMs: 1000);
+```
+
+Returns `true` on notification, `false` on timeout.
+
+### Dispose
+
+```csharp
+region.Dispose();
+```
+
+```csharp
+using (var region = SharedRegion.Open("my-data")) {
+    Span<byte> bytes = region.Bytes();
+    // region is disposed when the block exits
+}
+```
+
+## Complete example
+
+```csharp
+using Zinc;
+
+// Writer
+var writer = SharedRegion.Create("csharp-channel", (nuint)4096);
+var bytes = writer.Bytes();
+BitConverter.GetBytes(42.0).CopyTo(bytes);
+writer.Notify();
+Thread.Sleep(2000);
+writer.Dispose();
+
+// Reader (separate process)
+var reader = SharedRegion.Open("csharp-channel");
+if (reader.Wait(3000)) {
+    var data = reader.Bytes();
+    double val = BitConverter.ToDouble(data);
+    Console.WriteLine($"read: {val}"); // 42.0
+}
+reader.Dispose();
+```
+
+## P/Invoke details
+
+The native function declarations:
+
+```csharp
+[DllImport("zinc_core")]
+static extern int zinc_create(string name, nuint capacity, out nint handle);
+
+[DllImport("zinc_core")]
+static extern int zinc_open(string name, out nint handle);
+
+[DllImport("zinc_core")]
+static extern nint zinc_ptr(nint handle);
+
+[DllImport("zinc_core")]
+static extern nuint zinc_capacity(nint handle);
+
+[DllImport("zinc_core")]
+static extern void zinc_close(nint handle);
+
+[DllImport("zinc_core")]
+static extern void zinc_notify(nint handle);
+
+[DllImport("zinc_core")]
+static extern int zinc_wait(nint handle, uint timeoutMs);
+```
+
+The `Bytes()` method creates a `Span<byte>` from the native pointer and capacity using `new Span<byte>((void*)ptr, (int)capacity)`. This is an unsafe context but the adapter encapsulates it. The span is valid only while the `SharedRegion` handle is not disposed.
+
+The `zinc_core` library must be on the system's library search path, or placed in the same directory as the application executable. On Windows, this means `zinc_core.dll` must be discoverable via `PATH` or the application directory. On Linux and macOS, the standard library paths apply.

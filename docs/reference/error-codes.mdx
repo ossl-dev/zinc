@@ -1,0 +1,99 @@
+---
+title: "Error Codes"
+description: "Every error code returned by the Zinc ABI and what it means"
+---
+
+Zinc functions return 0 on success and negative POSIX error codes on failure. Language adapters translate these into native error types: Rust returns `Result<T, ZincError>`, Python raises `OSError`, Go returns `error`, and other languages throw exceptions.
+
+## Error enum
+
+The Rust core defines a `ZincError` enum with these variants:
+
+| Variant | Error code | Trigger |
+|---------|------------|---------|
+| `AlreadyExists(String)` | -17 (EEXIST) | `create` called with a name that is already in use |
+| `NotFound(String)` | -2 (ENOENT) | `open` called with a name that has no active region |
+| `InvalidSize { page_size }` | -22 (EINVAL) | `create` called with size 0 or not page-aligned |
+| `InvalidName` | -22 (EINVAL) | Name is empty or contains invalid characters |
+| `PermissionDenied` | -1 (EPERM) | OS permission check failed |
+| `Platform(io::Error)` | OS-dependent | Underlying OS call failed (shm_open, mmap, etc.) |
+| `RingFull` | -11 (EAGAIN) | Internal notification ring has no free slots |
+| `TimedOut` | -110 (ETIMEDOUT) | `wait` returned without a notification |
+| `CorruptedRegion` | -74 (EBADMSG) | Header magic or version mismatch on open |
+
+## Error by scenario
+
+When you encounter an error during development, this table can help identify the cause:
+
+| What you did | Likely error | Common cause |
+|---|---|---|
+| `create("my-data", 4096)` in two processes | `AlreadyExists` | Second process should use `open`, not `create` |
+| `open("my-data")` before anyone calls `create` | `NotFound` | Check process startup order |
+| `create("", 4096)` | `InvalidName` | Name must be non-empty |
+| `create("my data", 4096)` | `InvalidName` | Name contains space; must match `[a-zA-Z0-9_-]+` |
+| `create("test", 0)` | `InvalidSize` | Capacity must be > 0 and page-aligned |
+| `create("test", 100)` | `InvalidSize` | 100 is not a multiple of 4096 |
+| `wait()` times out | `TimedOut` | No one called `notify`, or timeout is too short |
+| `wait()` on a corrupted region | `TimedOut` or `Platform` | Header was overwritten or version mismatch |
+| `open("my-data")` after creator crashed | `NotFound` or stale | See lifecycle guide for crash recovery |
+
+## Error handling examples
+
+<CodeGroup>
+  ```rust Rust
+  match SharedRegion::create("test", 4096) {
+      Ok(r) => { /* use region */ }
+      Err(ZincError::AlreadyExists(name)) => {
+          // Fall back to opening the existing region
+          SharedRegion::open(&name)?
+      }
+      Err(ZincError::InvalidSize { page_size }) => {
+          eprintln!("Size must be a multiple of {page_size}");
+          return;
+      }
+      Err(e) => {
+          eprintln!("Unexpected error: {e}");
+          return;
+      }
+  }
+  ```
+
+  ```python Python
+  from zinc import SharedRegion
+  import os
+
+  try:
+      region = SharedRegion.create("test", 4096)
+  except OSError as e:
+      if e.errno == errno.EEXIST:
+          region = SharedRegion.open("test")
+      else:
+          raise
+  ```
+
+  ```go Go
+  import "zinc"
+
+  region, err := zinc.Create("test", 4096)
+  if err != nil {
+      // err contains the error code string
+      region, err = zinc.Open("test")
+      if err != nil {
+          log.Fatal(err)
+      }
+  }
+  ```
+</CodeGroup>
+
+## Platform errors
+
+Any system call can produce an OS-level error. These are wrapped in `ZincError::Platform(io::Error)`. The error code returned to the caller is the negated OS error code. Common platform errors:
+
+| Code | Linux/macOS | Windows |
+|------|-------------|---------|
+| `EACCES` (-13) | File permission mismatch | Access denied |
+| `ENFILE` (-23) | System-wide file descriptor limit | Not applicable |
+| `ENOMEM` (-12) | Out of memory for mmap | Out of memory |
+| `EMFILE` (-24) | Process file descriptor limit | Not applicable |
+
+Check return values during development. In production, handle at least `AlreadyExists` (fall back to `open`), `NotFound` (retry or log), and `TimedOut` (treat as a heartbeat miss).

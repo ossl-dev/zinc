@@ -1,0 +1,98 @@
+---
+title: "Node.js Adapter"
+description: "Use Zinc from Node.js with native N-API bindings"
+---
+
+The Node.js adapter uses napi-rs, which compiles a Rust crate into a `.node` native addon. The addon links directly to `zinc-core` and exposes a JavaScript class backed by the Rust core.
+
+## Installation
+
+```bash
+npm install @aspect-build/zinc
+```
+
+Requires Node.js 18 or later. The native addon is built for your platform at install time.
+
+## ZincRegion
+
+```typescript
+import { ZincRegion } from '@aspect-build/zinc';
+```
+
+### create
+
+```typescript
+const region = ZincRegion.create("my-data", 4096);
+```
+
+Creates a new region. Throws if the name already exists or the size is invalid.
+
+### open
+
+```typescript
+const region = ZincRegion.open("my-data");
+```
+
+Opens an existing region. Throws if the region does not exist.
+
+### asBuffer
+
+Returns a Node.js `Buffer` backed by the shared memory mapping. No copying occurs.
+
+```typescript
+const buf = region.asBuffer();
+buf.writeFloatLE(3.14, 0);
+const val = buf.readFloatLE(0);
+```
+
+The buffer points directly into the mmap. Writing to the buffer modifies shared memory immediately.
+
+### notify
+
+```typescript
+region.notify();
+```
+
+### wait
+
+```typescript
+const ok = region.wait(1000); // returns boolean
+```
+
+Returns `true` if data was available, `false` on timeout.
+
+## Complete example
+
+```typescript
+import { ZincRegion } from '@aspect-build/zinc';
+
+// Writer
+const writer = ZincRegion.create("channel", 4096);
+const buf = writer.asBuffer();
+const view = new Float64Array(buf.buffer, buf.byteOffset, buf.length / 8);
+
+view[0] = 42.0;
+writer.notify();
+
+setTimeout(() => {
+    writer.close();
+}, 5000);
+
+// Reader (separate process)
+const reader = ZincRegion.open("channel");
+const buf2 = reader.asBuffer();
+const view2 = new Float64Array(buf2.buffer, buf2.byteOffset, buf2.length / 8);
+
+if (reader.wait(3000)) {
+    console.log(view2[0]); // 42.0
+}
+reader.close();
+```
+
+## TypeScript
+
+The package includes TypeScript declarations. The `ZincRegion` class and all its methods are fully typed.
+
+## napi-rs internals
+
+The `asBuffer` method uses `napi::Env::create_buffer_with_borrowed_data`, which creates a `Buffer` from an externally-owned pointer without copying. The finalizer argument is a no-op because the mmap lifetime is managed by `ZincRegion`, not by the buffer's garbage collection. The buffer must not be used after the region is closed.

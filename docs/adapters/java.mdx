@@ -1,0 +1,133 @@
+---
+title: "Java Adapter"
+description: "Use Zinc from Java with JNA"
+---
+
+The Java adapter uses JNA (Java Native Access) to call the Zinc C ABI. JNA needs no native glue code. It loads the shared library and maps function calls through its built-in FFI.
+
+## Installation
+
+Add the dependency to your `pom.xml`:
+
+```xml
+<dependency>
+    <groupId>dev.zinc</groupId>
+    <artifactId>zinc-java</artifactId>
+    <version>0.1.0</version>
+</dependency>
+```
+
+The adapter requires JNA 5.x, which is pulled in as a transitive dependency.
+
+## SharedRegion
+
+```java
+import dev.zinc.SharedRegion;
+```
+
+### create
+
+```java
+var region = SharedRegion.create("my-data", 4096L);
+```
+
+Creates a new region. Throws `RuntimeException` on failure.
+
+### open
+
+```java
+var region = SharedRegion.open("my-data");
+```
+
+Opens an existing region.
+
+### buffer
+
+Returns a `java.nio.ByteBuffer` backed by the shared memory mapping. No copying occurs.
+
+```java
+var buf = region.buffer();
+buf.putFloat(0, 3.14f);
+buf.rewind();
+float val = buf.getFloat(0);
+```
+
+The buffer is direct (backed by native memory). It is writable by default.
+
+### notify
+
+```java
+region.notify();
+```
+
+### wait
+
+```java
+boolean ok = region.wait(1000);
+```
+
+Returns `true` on notification, `false` on timeout.
+
+### close
+
+```java
+region.close();
+```
+
+`SharedRegion` implements `AutoCloseable` for try-with-resources:
+
+```java
+try (var region = SharedRegion.open("my-data")) {
+    var buf = region.buffer();
+    float val = buf.getFloat(0);
+} // region is automatically closed
+```
+
+## Complete example
+
+```java
+import dev.zinc.SharedRegion;
+
+public class Example {
+    public static void main(String[] args) throws Exception {
+        // Writer
+        var writer = SharedRegion.create("java-channel", 4096L);
+        var buf = writer.buffer();
+        buf.putDouble(0, 3.14159);
+        writer.notify();
+        Thread.sleep(2000);
+        writer.close();
+
+        // Reader (run in separate JVM)
+        var reader = SharedRegion.open("java-channel");
+        if (reader.wait(3000)) {
+            var data = reader.buffer();
+            double val = data.getDouble(0);
+            System.out.println("read: " + val);
+        }
+        reader.close();
+    }
+}
+```
+
+## JNA internals
+
+The `ZincLib` interface maps the C ABI functions:
+
+```java
+interface ZincLib extends Library {
+    ZincLib INSTANCE = Native.load("zinc_core", ZincLib.class);
+
+    int zinc_create(String name, long capacity, PointerByReference out);
+    int zinc_open(String name, PointerByReference out);
+    Pointer zinc_ptr(Pointer handle);
+    long zinc_capacity(Pointer handle);
+    void zinc_close(Pointer handle);
+    void zinc_notify(Pointer handle);
+    int zinc_wait(Pointer handle, int timeoutMs);
+}
+```
+
+JNA loads `libzinc_core.{so,dylib,dll}` through its platform-native library loading mechanism. Ensure the library is on `java.library.path` or use `Native.load` with an absolute path.
+
+The `Pointer.getByteBuffer(offset, length)` method creates a direct `ByteBuffer` wrapping the native memory. The JVM garbage collector does not manage this buffer. It is valid only as long as the region handle is open.
