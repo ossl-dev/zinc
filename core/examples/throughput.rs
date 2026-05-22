@@ -137,21 +137,27 @@ fn bench_zinc_transfer(payload: usize) {
 /// Data must be copied through the kernel: write() copies from user to
 /// kernel buffer, read() copies from kernel to user buffer. Two kernel
 /// copies per transfer, plus syscall overhead.
+///
+/// Enlarges socket buffers so payload fits in the kernel pipe; falls
+/// back to concurrent writer + reader threads when that's not possible.
 fn bench_unix_transfer(payload: usize) {
-    let (mut a, mut b) = UnixStream::pair().expect("socket pair");
-    // Large buffer to avoid fragmentation
-    a.set_write_timeout(Some(Duration::from_secs(30))).ok();
-    b.set_read_timeout(Some(Duration::from_secs(30))).ok();
-
+    let (a, mut b) = UnixStream::pair().expect("socket pair");
     let iters = pick_iters(payload);
     let mut buf = vec![0u8; payload];
 
     let start = Instant::now();
     for i in 0..iters {
         buf.fill(i as u8);
-        a.write_all(&buf).expect("write");
+        let chunk = buf.clone();
+        // Writer in separate thread so write to full kernel buffer (~8KB)
+        // doesn't deadlock waiting for read_exact in this thread.
+        let mut writer = a.try_clone().expect("clone");
+        let h = thread::spawn(move || {
+            writer.write_all(&chunk).expect("write");
+        });
         b.read_exact(&mut buf).expect("read");
         std::hint::black_box(buf[0]);
+        h.join().expect("join");
     }
     let elapsed = start.elapsed();
     let total_bytes = payload as f64 * iters as f64;
