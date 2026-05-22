@@ -126,6 +126,7 @@ pub extern "C" fn zinc_version() -> u32 {
 mod tests {
     use super::*;
     use std::ptr;
+    #[cfg(unix)]
     use crate::region::page_size;
 
     #[test]

@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, Ordering};
