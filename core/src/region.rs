@@ -150,7 +150,7 @@ fn validate_name(name: &str) -> Result<()> {
     }
 }
 
-fn page_size() -> usize {
+pub(crate) fn page_size() -> usize {
     use std::sync::OnceLock;
     static PAGE_SIZE: OnceLock<usize> = OnceLock::new();
     *PAGE_SIZE.get_or_init(|| {
@@ -169,7 +169,9 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use std::sync::atomic::Ordering;
+    #[cfg(unix)]
     use crate::header::MAGIC;
 
     use super::*;

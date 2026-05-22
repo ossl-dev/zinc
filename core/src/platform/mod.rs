@@ -11,6 +11,7 @@ use std::ptr::NonNull;
 
 pub(crate) struct MappedFile {
     pub ptr: NonNull<u8>,
+    #[cfg_attr(windows, allow(dead_code))]
     pub len: usize,
 }
 
@@ -27,6 +28,7 @@ impl MappedFile {
 }
 
 pub(crate) enum CreateOrOpen {
+    #[cfg_attr(windows, allow(dead_code))]
     Create(usize),
     Open,
 }

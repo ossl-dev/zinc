@@ -126,12 +126,14 @@ pub extern "C" fn zinc_version() -> u32 {
 mod tests {
     use super::*;
     use std::ptr;
+    use crate::region::page_size;
 
     #[test]
+    #[cfg(unix)]
     fn zinc_create_open_close() {
         let name = b"test_cabi\0".as_ptr() as *const c_char;
         let mut handle: ZincHandle = ptr::null_mut();
-        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize };
+        let page = page_size();
 
         let code = zinc_create(name, page, &mut handle);
         assert_eq!(code, 0, "zinc_create failed: {code}");
