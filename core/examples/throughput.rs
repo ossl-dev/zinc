@@ -9,6 +9,22 @@ use zinc_core::SharedRegion;
 
 const NAME: &str = "bench_zinc";
 
+fn cleanup(name: &str) {
+    let cname = std::ffi::CString::new(format!("/zinc_{name}")).ok();
+    if let Some(cn) = cname {
+        unsafe { libc::shm_unlink(cn.as_ptr()); }
+    }
+}
+
+fn create_region(name: &str, size: usize) -> zinc_core::SharedRegion {
+    cleanup(name);
+    SharedRegion::create(name, page_align(size)).expect("create")
+}
+
+fn open_region(name: &str) -> zinc_core::SharedRegion {
+    SharedRegion::open(name).expect("open")
+}
+
 fn page_align(size: usize) -> usize {
     let page = page_size();
     (size + page - 1) & !(page - 1)
@@ -46,8 +62,8 @@ fn main() {
 /// Notifier thread runs continuously (every 1 µs) until main thread finishes.
 /// This prevents the race where the notifier finishes before the waiter catches up.
 fn bench_notify_latency() {
-    let parent = SharedRegion::create(NAME, page_align(4096)).expect("create");
-    let child = SharedRegion::open(NAME).expect("open");
+    let parent = create_region(NAME, page_align(4096));
+    let child = open_region(NAME);
     let done = Arc::new(AtomicBool::new(false));
     let done_clone = done.clone();
 
@@ -86,8 +102,8 @@ fn bench_notify_latency() {
 /// never moves — both handles point to the same mmap'd pages).
 fn bench_zinc_transfer(payload: usize) {
     let payload = page_align(payload); // must be page-aligned on all platforms
-    let parent = SharedRegion::create(NAME, payload).expect("create");
-    let child = SharedRegion::open(NAME).expect("open");
+    let parent = create_region(NAME, payload);
+    let child = open_region(NAME);
 
     let iters = pick_iters(payload);
 
