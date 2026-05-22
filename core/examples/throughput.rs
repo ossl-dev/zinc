@@ -1,5 +1,4 @@
 use std::hint::black_box;
-use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use zinc_core::SharedRegion;
@@ -22,8 +21,13 @@ fn main() {
     let elapsed = start.elapsed();
     let total_bytes = size as f64 * iterations as f64;
     let gb_per_sec = total_bytes / elapsed.as_secs_f64() / 1_000_000_000.0;
-    println!("Write throughput: {:.2} GB/s ({:.2?} for {} x {}MB)",
-             gb_per_sec, elapsed, iterations, size / 1024 / 1024);
+    println!(
+        "Write throughput: {:.2} GB/s ({:.2?} for {} x {}MB)",
+        gb_per_sec,
+        elapsed,
+        iterations,
+        size / 1024 / 1024
+    );
 
     // Read throughput
     let start = Instant::now();
@@ -38,8 +42,10 @@ fn main() {
     }
     let elapsed = start.elapsed();
     let gb_per_sec = total_bytes / elapsed.as_secs_f64() / 1_000_000_000.0;
-    println!("Read throughput:  {:.2} GB/s ({:.2?}) — checksum: {:x}",
-             gb_per_sec, elapsed, sum);
+    println!(
+        "Read throughput:  {:.2} GB/s ({:.2?}) \u{2014} checksum: {:x}",
+        gb_per_sec, elapsed, sum
+    );
 
     // Notify/wait latency
     let region2 = SharedRegion::open(name).expect("open region");
@@ -56,8 +62,10 @@ fn main() {
     }
     let elapsed = start.elapsed();
     let avg_ns = elapsed.as_nanos() as f64 / iterations as f64;
-    println!("\nNotify/wait roundtrip: {:.0} ns avg ({:.2?} for {} iterations)",
-             avg_ns, elapsed, iterations);
+    println!(
+        "\nNotify/wait roundtrip: {:.0} ns avg ({:.2?} for {} iterations)",
+        avg_ns, elapsed, iterations
+    );
 
     drop(region2);
     drop(region);
