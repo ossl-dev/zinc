@@ -77,5 +77,6 @@
     "socials": {
       "github": "https://github.com/aspect-build/zinc"
     }
-  }
+  },
+  "description": "Universal Shared Memory"
 }
