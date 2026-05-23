@@ -107,7 +107,7 @@
       }
     ]
   },
-  "logo": "/docs/images/ZINC.png",
+  "logo": "/images/ZINC.png",
   "favicon": "/images/logo.png",
   "styling": {
     "eyebrows": "breadcrumbs",
