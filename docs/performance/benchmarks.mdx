@@ -88,24 +88,12 @@ cargo run --release --example throughput --manifest-path core/Cargo.toml -- 1048
 
 This is the quickest way to measure Zinc's raw throughput on your hardware without running the full criterion suite.
 
-## Benchmarking your own setup
+## Benchmarks
 
-The benchmark suite lives in `benches/` and uses `criterion` for statistical measurement:
+Benchmarks are not yet available. They will live in `core/benches/` and use `criterion` for statistical measurement. Once added, they'll be run with:
 
 ```bash
 cargo bench --manifest-path core/Cargo.toml
-```
-
-Available benchmarks:
-
-- `rust_throughput` -- Measures sequential read/write throughput for a configurable region size.
-- `notify_latency` -- Measures notify/wait roundtrip latency with microsecond precision.
-- `vs_socket` -- Compares Zinc notify/wait against Unix domain socket echo for the same workload.
-
-To run a specific benchmark:
-
-```bash
-cargo bench --manifest-path core/Cargo.toml --bench notify_latency
 ```
 
 ## Allocation-free hot path
