@@ -95,7 +95,19 @@ fn bench_notify_latency() -> (f64, usize) {
     (avg, iters)
 }
 
-#[cfg(not(windows))]
+fn pick_iters_socket(payload: usize) -> usize {
+    match payload {
+        p if p <= 1024 => 5_000,
+        p if p <= 65_536 => 500,
+        p if p <= 1_048_576 => 50,
+        _ => 10,
+    }
+}
+
+fn warmup_iters_socket(payload: usize) -> usize {
+    (pick_iters_socket(payload) / 5).max(5)
+}
+
 fn bench_zinc_transfer(nominal: usize, aligned: usize) -> Result {
     let parent = create_region(NAME, aligned);
     let child = open_region(NAME);
@@ -132,8 +144,8 @@ fn bench_zinc_transfer(nominal: usize, aligned: usize) -> Result {
 
 fn bench_unix_transfer(payload: usize) -> Result {
     let (a, mut b) = UnixStream::pair().expect("socket pair");
-    let iters = pick_iters(payload);
-    let warmup = warmup_iters(payload);
+    let iters = pick_iters_socket(payload);
+    let warmup = warmup_iters_socket(payload);
     let mut buf = vec![0u8; payload];
 
     let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(1);
