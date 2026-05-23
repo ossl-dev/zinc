@@ -27,7 +27,10 @@ impl SharedRegion {
         if capacity == 0 || !capacity.is_multiple_of(page) {
             return Err(ZincError::InvalidSize { page_size: page });
         }
-        let total = std::mem::size_of::<RegionHeader>()
+        // Reserve full first page for the header so data is page-aligned.
+        // Page-aligned data lets CPU write-combining and L1 streaming
+        // prefetch operate at full throughput for memset/write_bytes.
+        let total = page
             .checked_add(capacity)
             .ok_or(ZincError::InvalidSize { page_size: page })?;
         let map = platform::map(name, platform::CreateOrOpen::Create(total))?;
@@ -76,8 +79,9 @@ impl SharedRegion {
         })
     }
 
+    #[inline]
     pub fn as_ptr(&self) -> *mut u8 {
-        unsafe { self.inner.map.ptr.as_ptr().add(std::mem::size_of::<RegionHeader>()) }
+        unsafe { self.inner.map.ptr.as_ptr().add(page_size()) }
     }
 
     pub fn capacity(&self) -> usize {
@@ -88,6 +92,7 @@ impl SharedRegion {
         &self.inner.name
     }
 
+    #[inline]
     pub fn notify(&self) {
         crate::sync::notify(&self.header().notify_seq)
     }
@@ -102,6 +107,7 @@ impl SharedRegion {
     ///
     /// With `last_seq`, the reader waits for a change from its own
     /// last-known value, which is always the pre-notification value.
+    #[inline]
     pub fn wait(&self, timeout_ms: u32) -> Result<()> {
         let last = self.last_seq.load(Ordering::Acquire);
         let seq_addr = &self.header().notify_seq;
@@ -122,6 +128,7 @@ impl SharedRegion {
         result
     }
 
+    #[inline(always)]
     fn header(&self) -> &RegionHeader {
         unsafe { &*(self.inner.map.ptr.as_ptr() as *const RegionHeader) }
     }
@@ -348,13 +355,12 @@ mod tests {
 
     #[test]
     fn total_size_computation_no_overflow() {
-        // Header + capacity must not overflow usize when computing total mapping size.
-        let header_sz = std::mem::size_of::<RegionHeader>();
-        let max_cap = usize::MAX - header_sz;
+        // Page + capacity must not overflow usize.
         let page = page_size();
+        let max_cap = usize::MAX - page;
         let aligned_max = max_cap - (max_cap % page);
-        let total = header_sz.checked_add(aligned_max);
-        assert!(total.is_some(), "header + capacity should not overflow");
+        let total = page.checked_add(aligned_max);
+        assert!(total.is_some(), "page + capacity should not overflow");
     }
 }
 

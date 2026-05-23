@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64};
 
 pub const MAGIC: u64 = 0x5A494E435F524547; // "ZINC_REG"
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 2;
 
 /// Lives at byte 0 of the mapped region. #[repr(C)] + align(64) = one cache line,
 /// no false sharing with the region data that follows.

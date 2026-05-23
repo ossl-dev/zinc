@@ -1,0 +1,285 @@
+use std::time::Instant;
+
+use redis::Commands;
+
+#[cfg(not(windows))]
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(not(windows))]
+use std::sync::Arc;
+#[cfg(not(windows))]
+use std::thread;
+#[cfg(not(windows))]
+use std::time::Duration;
+
+#[cfg(not(windows))]
+use zinc_core::SharedRegion;
+
+#[cfg(not(windows))]
+const NAME: &str = "zr_bench";
+
+struct BenchResult {
+    gbps: f64,
+    total_gb: f64,
+}
+
+fn main() {
+    #[cfg(not(windows))]
+    {
+        let mut conn = match redis::Client::open("redis://127.0.0.1:6379/")
+            .and_then(|c| c.get_connection())
+        {
+            Ok(conn) => conn,
+            Err(_) => {
+                println!("Redis not available on localhost:6379. Start Redis and retry.");
+                return;
+            }
+        };
+        run_benchmarks(&mut conn);
+    }
+
+    #[cfg(windows)]
+    {
+        eprintln!("Zinc benchmark: not supported on Windows");
+        std::process::exit(1);
+    }
+}
+
+// ── Helpers ─────────────────────────────────────────────────────
+
+fn fmt_size(kb: usize) -> String {
+    if kb >= 1_048_576 {
+        format!("{} GB", kb / 1_048_576)
+    } else if kb >= 1024 && kb % 1024 == 0 {
+        format!("{} MB", kb / 1024)
+    } else if kb >= 1024 {
+        format!("{:.1} MB", kb as f64 / 1024.0)
+    } else {
+        format!("{} KB", kb)
+    }
+}
+
+fn pick_iters(payload: usize) -> usize {
+    match payload {
+        p if p <= 1024 => 100_000,
+        p if p <= 65_536 => 10_000,
+        p if p <= 1_048_576 => 1_000,
+        _ => 100,
+    }
+}
+
+fn warmup_iters(payload: usize) -> usize {
+    (pick_iters(payload) / 10).max(10)
+}
+
+fn pick_iters_redis(payload: usize) -> usize {
+    match payload {
+        p if p <= 1024 => 5_000,
+        p if p <= 65_536 => 500,
+        p if p <= 1_048_576 => 50,
+        _ => 10,
+    }
+}
+
+fn warmup_iters_redis(payload: usize) -> usize {
+    (pick_iters_redis(payload) / 5).max(5)
+}
+
+fn bench_redis_transfer(conn: &mut redis::Connection, payload: usize) -> BenchResult {
+    let iters = pick_iters_redis(payload);
+    let warmup = warmup_iters_redis(payload);
+    let mut data = vec![0u8; payload];
+
+    for i in 0..warmup {
+        data.fill(i as u8);
+        let _: () = conn.set("bench_key", data.as_slice()).expect("redis warmup set");
+        let _got: Vec<u8> = conn.get("bench_key").expect("redis warmup get");
+    }
+
+    let start = Instant::now();
+    for i in 0..iters {
+        data.fill(i as u8);
+        let _: () = conn.set("bench_key", data.as_slice()).expect("redis set");
+        let got: Vec<u8> = conn.get("bench_key").expect("redis get");
+        assert_eq!(got.len(), payload, "Redis returned wrong size");
+        assert_eq!(got[0], data[0], "Redis returned wrong data");
+        std::hint::black_box(got[0]);
+    }
+
+    let elapsed = start.elapsed();
+    let total_bytes = payload as f64 * iters as f64;
+
+    BenchResult {
+        gbps: total_bytes / elapsed.as_secs_f64() / 1_000_000_000.0,
+        total_gb: total_bytes / (1024.0 * 1024.0 * 1024.0),
+    }
+}
+
+// ── Zinc helpers ────────────────────────────────────────────────
+
+#[cfg(not(windows))]
+fn cleanup(name: &str) {
+    let cname = std::ffi::CString::new(format!("/zinc_{name}")).ok();
+    if let Some(cn) = cname {
+        unsafe { libc::shm_unlink(cn.as_ptr()); }
+    }
+}
+
+#[cfg(not(windows))]
+fn create_region(name: &str, size: usize) -> zinc_core::SharedRegion {
+    cleanup(name);
+    SharedRegion::create(name, page_align(size)).expect("create")
+}
+
+#[cfg(not(windows))]
+fn open_region(name: &str) -> zinc_core::SharedRegion {
+    SharedRegion::open(name).expect("open")
+}
+
+#[cfg(not(windows))]
+fn page_align(size: usize) -> usize {
+    let page = page_size();
+    (size + page - 1) & !(page - 1)
+}
+
+#[cfg(not(windows))]
+fn page_size() -> usize {
+    unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
+}
+
+#[cfg(not(windows))]
+fn bench_notify_latency() -> (f64, usize) {
+    let parent = create_region(NAME, 4096);
+    let child = open_region(NAME);
+
+    let done = Arc::new(AtomicBool::new(false));
+    let done_signal = done.clone();
+    let handle = thread::spawn(move || {
+        while !done_signal.load(Ordering::Relaxed) {
+            thread::sleep(Duration::from_micros(1));
+            parent.notify();
+        }
+    });
+
+    let iters = 5_000;
+    let start = Instant::now();
+    for _ in 0..iters {
+        child.wait(5000).expect("wait");
+    }
+    done.store(true, Ordering::Release);
+    let elapsed = start.elapsed();
+    handle.join().unwrap();
+
+    let avg = elapsed.as_secs_f64() / iters as f64 * 1_000_000.0;
+    (avg, iters)
+}
+
+#[cfg(not(windows))]
+fn bench_zinc_transfer(nominal: usize, aligned: usize) -> BenchResult {
+    let parent = create_region(NAME, aligned);
+    let child = open_region(NAME);
+
+    let iters = pick_iters(nominal);
+    let payload = aligned;
+    let warmup = warmup_iters(nominal);
+
+    for i in 0..warmup {
+        unsafe { std::ptr::write_bytes(parent.as_ptr(), (i % 256) as u8, payload) }
+        parent.notify();
+        child.wait(5000).expect("warmup");
+        std::hint::black_box(unsafe { std::ptr::read(child.as_ptr()) });
+    }
+
+    let start = Instant::now();
+    for i in 0..iters {
+        unsafe { std::ptr::write_bytes(parent.as_ptr(), (i % 256) as u8, payload) }
+        parent.notify();
+        child.wait(5000).expect("wait");
+        std::hint::black_box(unsafe { std::ptr::read(child.as_ptr()) });
+    }
+    let elapsed = start.elapsed();
+    let total_bytes = payload as f64 * iters as f64;
+
+    drop(child);
+    drop(parent);
+
+    BenchResult {
+        gbps: total_bytes / elapsed.as_secs_f64() / 1_000_000_000.0,
+        total_gb: total_bytes / (1024.0 * 1024.0 * 1024.0),
+    }
+}
+
+// ── Orchestrator ────────────────────────────────────────────────
+
+#[cfg(not(windows))]
+fn run_benchmarks(conn: &mut redis::Connection) {
+    let (latency_us, latency_iters) = bench_notify_latency();
+
+    let sizes: &[usize] = &[1, 64, 1024, 10240, 102400];
+    let mut rows: Vec<(usize, BenchResult, BenchResult)> = Vec::new();
+
+    const SAMPLES: usize = 5;
+
+    for &payload_kb in sizes {
+        let nominal = payload_kb * 1024;
+        let aligned = page_align(nominal);
+
+        let mut zinc_best = 0.0_f64;
+        let mut redis_best = 0.0_f64;
+        let mut zinc_data = 0.0_f64;
+        let mut redis_data = 0.0_f64;
+
+        for s in 0..SAMPLES {
+            let (z, r) = if s % 2 == 0 {
+                (bench_zinc_transfer(nominal, aligned), bench_redis_transfer(conn, nominal))
+            } else {
+                let r = bench_redis_transfer(conn, nominal);
+                let z = bench_zinc_transfer(nominal, aligned);
+                (z, r)
+            };
+            if z.gbps > zinc_best { zinc_best = z.gbps; zinc_data = z.total_gb; }
+            if r.gbps > redis_best { redis_best = r.gbps; redis_data = r.total_gb; }
+        }
+
+        rows.push((payload_kb,
+            BenchResult { gbps: zinc_best, total_gb: zinc_data },
+            BenchResult { gbps: redis_best, total_gb: redis_data },
+        ));
+    }
+
+    const GRN: &str = "\x1b[32m";
+    const RED: &str = "\x1b[31m";
+    const RST: &str = "\x1b[0m";
+    const BLD: &str = "\x1b[1m";
+
+    println!("\n\n{}══════════════════════════════════════════════════════{}", BLD, RST);
+    println!("{}           Zinc vs Redis — Throughput{}", BLD, RST);
+    println!("{} Notify/wait latency: {:.1} µs avg ({} iters){}", BLD, latency_us, latency_iters, RST);
+    println!("{}══════════════════════════════════════════════════════{}", BLD, RST);
+    println!(" {:<8} {:>12} {:>12} {:>6} {:>10}", "Payload", "Zinc", "Redis", "Ratio", "Data");
+    println!("{0:\u{2500}^10} {0:\u{2500}^14} {0:\u{2500}^14} {0:\u{2500}^7} {0:\u{2500}^12}", "");
+
+    for (kb, z, r) in &rows {
+        let label = fmt_size(*kb);
+        let ratio = z.gbps / r.gbps;
+        let total = (z.total_gb + r.total_gb) / 2.0;
+
+        println!(
+            " {:<8} {}{:>10.2} GB/s{} {}{:>10.2} GB/s{} {:>5.0}x {:>8.2} GB",
+            label, GRN, z.gbps, RST, RED, r.gbps, RST, ratio, total,
+        );
+    }
+
+    println!("{0:\u{2500}^10} {0:\u{2500}^14} {0:\u{2500}^14} {0:\u{2500}^7} {0:\u{2500}^12}", "");
+    println!(
+        "{}Zinc: memory-bandwidth-bound. Redis: network-stack-bound (~1–5 GB/s localhost).{}",
+        GRN, RST
+    );
+    println!(
+        "{}Zero kernel data copies vs. Redis full TCP stack even on loopback.{}",
+        GRN, RST
+    );
+    println!(
+        "{}Method: min-time (max GB/s) across {} samples, alternating order.{}",
+        RST, SAMPLES, RST
+    );
+}

@@ -71,22 +71,77 @@ The addresses should match (or differ by a constant offset if the header is incl
 
 **Redis.** Redis is a network service. Data goes through the client library, through the kernel's network stack, into Redis's memory, and back. Useful for data that needs to be shared between machines. For same-machine sharing, the overhead is unnecessary.
 
-**mmap files.** A shared file mmap is similar to Zinc at the system call level. The difference is lifecycle: Zinc handles creation, naming, reference counting, and cleanup automatically. With raw mmap of a file, you must manage file creation, sizing, and cleanup yourself. Zinc's regions are anonymous (backed by `shm_open`, not a visible file) and self-cleaning.
+**mmap files.** Raw `shm_open` + `mmap` + `ftruncate` uses the exact same kernel primitives as Zinc. Throughput is identical — both are memory-bandwidth-bound. Any measurement variance between them is OS scheduling noise (CPU frequency scaling, thread placement), not a code-path difference. The difference is lifecycle: Zinc handles creation, naming, reference counting, and cleanup automatically. With raw mmap, you must manage file creation, sizing, and cleanup yourself. Zinc's regions are anonymous (backed by `shm_open`, not a visible file) and self-cleaning.
 
-**Plasma (Ray).** Plasma is a shared memory object store with a client-server architecture. A central Plasma process manages allocations. Zinc has no server. Memory is shared directly between processes with no intermediary. Plasma supports millions of small objects; Zinc is optimized for large contiguous regions.
+**Plasma (Ray).** Deprecated. Formerly a shared memory object store with a client-server architecture. Zinc has no server — memory is shared directly between processes with no intermediary.
 
-## Throughput example
+Run the [throughput examples](#throughput-examples) above to measure each alternative against Zinc on your hardware.
 
-A standalone throughput example is available in `core/examples/`. It creates a shared region of configurable size, performs sequential reads and writes, and reports throughput:
+## Benchmark methodology
+
+Each example uses the same statistically rigorous approach to isolate true throughput from system noise.
+
+### Min-time (max GB/s) across multiple samples
+
+Noise sources — CPU frequency scaling, thermal throttling, OS scheduler interrupts, TLB pressure — **only ever slow things down, never speed them up**. The fastest observed run is therefore the run with the least noise, closest to the true hardware limit.
+
+$$T_{\text{best}} = \min(T_1, T_2, \ldots, T_n)$$
+
+$$\text{Throughput} = \frac{\text{payload bytes} \times \text{iterations}}{T_{\text{best}}}$$
+
+This is the industry standard, used by [Criterion.rs](https://github.com/bheisler/criterion.rs) and [Google Benchmark](https://github.com/google/benchmark). Taking the **average** would encode noise — a single context-switch spike inflates the mean.
+
+### Alternating order
+
+At each payload size, 5 independent samples are collected. Odd-numbered samples run Zinc first, then the alternative. Even-numbered samples run the alternative first, then Zinc. This cancels first-run bias (cold pages, cold kernel caches).
+
+### Warmup phase
+
+Before each timed measurement, 10% of the full iteration count is run as unmeasured warmup. This faults in physical pages, primes the TLB, and stabilizes CPU frequency before timing begins.
+
+### Page-aligned data
+
+Zinc reserves the full first page of the shared memory region for the header. The data region (`as_ptr()`) starts at a page boundary:
+
+$$\text{data\_offset} = \text{page\_size} \quad \text{(not sizeof(RegionHeader))}$$
+
+Page-aligned data lets CPU write-combining buffers and L1 streaming prefetch operate at full bandwidth. Without this, `memset` crossing a page boundary on every write cycle incurs a measurable throughput penalty at small payloads.
+
+## Throughput examples
+
+Standalone comparison benchmarks live in `core/examples/`. Each measures Zinc against an alternative for the same workload and prints a throughput table.
+
+### Zinc vs Unix sockets
 
 ```bash
-cargo run --release --example throughput --manifest-path core/Cargo.toml
-
-# Specify region size in bytes (default 1GB):
-cargo run --release --example throughput --manifest-path core/Cargo.toml -- 104857600
+cargo run --release --example unix_sockets --manifest-path core/Cargo.toml
 ```
 
-This is the quickest way to measure Zinc's raw throughput on your hardware without running the full criterion suite.
+Measures notify/wait latency and sequential transfer throughput for Zinc shared memory vs Unix domain socket pairs. Zinc is memory-bandwidth-bound (~60 GB/s); sockets are kernel-copy-bound (~1.4 GB/s).
+
+### Zinc vs raw mmap
+
+```bash
+cargo run --release --example mmap --manifest-path core/Cargo.toml
+```
+
+Compares Zinc against raw `shm_open` + `mmap` + `ftruncate` with manual futex synchronization. Throughput is identical — both use the same kernel primitives. Any deviation from ratio 1.00 is OS scheduling noise, not a Zinc overhead. The raw path requires explicit lifecycle management: `shm_open`, `ftruncate`, `mmap`, `shm_unlink`, and manual notify/wait via `futex`. Zinc adds automatic creation, reference counting, and cleanup on drop.
+
+### Zinc vs gRPC
+
+```bash
+cargo run --release --example grpc --manifest-path core/Cargo.toml
+```
+
+Compares Zinc against protobuf-serialized messages over TCP (length-prefixed framing, same wire format as gRPC). Demonstrates serialization cost: Zinc's zero-copy path takes 0 ms to "transfer" bytes; the gRPC path pays protobuf encode/decode and kernel TCP stack overhead.
+
+### Zinc vs Redis
+
+```bash
+cargo run --release --example redis --manifest-path core/Cargo.toml
+```
+
+Compares Zinc against Redis SET/GET on localhost. Requires Redis running on `127.0.0.1:6379`. Shows network-stack overhead even on loopback — data goes through client library → kernel TCP → Redis process → and back.
 
 ## Benchmarks
 

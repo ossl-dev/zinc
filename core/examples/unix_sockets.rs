@@ -67,58 +67,6 @@ fn page_size() -> usize {
 }
 
 #[cfg(not(windows))]
-fn run_benchmarks() {
-    let (latency_us, latency_iters) = bench_notify_latency();
-
-    let sizes: &[usize] = &[1, 64, 1024, 10240, 1048576]; // KB
-    let mut rows: Vec<(usize, Result, Result)> = Vec::new();
-
-    for &payload_kb in sizes {
-        let nominal = payload_kb * 1024;
-        let aligned = page_align(nominal);
-        let zinc = bench_zinc_transfer(nominal, aligned);
-        let socket = bench_unix_transfer(nominal);
-        rows.push((payload_kb, zinc, socket));
-    }
-
-    const GRN: &str = "\x1b[32m";
-    const RED: &str = "\x1b[31m";
-    const RST: &str = "\x1b[0m";
-    const BLD: &str = "\x1b[1m";
-
-    println!("\n\n{}══════════════════════════════════════════════════════{}", BLD, RST);
-    println!("{}        Zinc vs Unix Socket \u{2014} Throughput{}", BLD, RST);
-    println!("{} Notify/wait latency: {:.1} \u{00b5}s avg ({} iters){}", BLD, latency_us, latency_iters, RST);
-    println!("{}══════════════════════════════════════════════════════{}", BLD, RST);
-    println!(" {:<8} {:>12} {:>12} {:>6} {:>10}", "Payload", "Zinc", "Socket", "Ratio", "Data");
-    println!("{0:\u{2500}^10} {0:\u{2500}^14} {0:\u{2500}^14} {0:\u{2500}^7} {0:\u{2500}^12}", "");
-
-    for (kb, z, s) in &rows {
-        let label = fmt_size(*kb);
-        let ratio = z.gbps / s.gbps;
-        let total = (z.total_gb + s.total_gb) / 2.0;
-
-        println!(
-            " {:<8} {}{:>10.2} GB/s{} {}{:>10.2} GB/s{} {:>5.0}x {:>8.2} GB",
-            label,
-            GRN, z.gbps, RST,
-            RED, s.gbps, RST,
-            ratio, total,
-        );
-    }
-
-    println!("{0:\u{2500}^10} {0:\u{2500}^14} {0:\u{2500}^14} {0:\u{2500}^7} {0:\u{2500}^12}", "");
-    println!(
-        "{}Zinc: memory-bandwidth-bound (~60 GB/s). Socket: kernel-copy-bound (~1.4 GB/s).{}",
-        GRN, RST
-    );
-    println!(
-        "{}Zinc has zero kernel data copies \u{2014} same physical pages, both processes.{}",
-        GRN, RST
-    );
-}
-
-#[cfg(not(windows))]
 fn fmt_size(kb: usize) -> String {
     if kb >= 1_048_576 {
         format!("{} GB", kb / 1_048_576)
@@ -129,6 +77,21 @@ fn fmt_size(kb: usize) -> String {
     } else {
         format!("{} KB", kb)
     }
+}
+
+#[cfg(not(windows))]
+fn pick_iters(payload: usize) -> usize {
+    match payload {
+        p if p <= 1024 => 100_000,
+        p if p <= 65_536 => 10_000,
+        p if p <= 1_048_576 => 1_000,
+        _ => 100,
+    }
+}
+
+#[cfg(not(windows))]
+fn warmup_iters(payload: usize) -> usize {
+    (pick_iters(payload) / 10).max(10)
 }
 
 #[cfg(not(windows))]
@@ -165,6 +128,14 @@ fn bench_zinc_transfer(nominal: usize, aligned: usize) -> Result {
 
     let iters = pick_iters(nominal);
     let payload = aligned;
+    let warmup = warmup_iters(nominal);
+
+    for i in 0..warmup {
+        unsafe { std::ptr::write_bytes(parent.as_ptr(), (i % 256) as u8, payload) }
+        parent.notify();
+        child.wait(5000).expect("warmup");
+        std::hint::black_box(unsafe { std::ptr::read(child.as_ptr()) });
+    }
 
     let start = Instant::now();
     for i in 0..iters {
@@ -189,6 +160,7 @@ fn bench_zinc_transfer(nominal: usize, aligned: usize) -> Result {
 fn bench_unix_transfer(payload: usize) -> Result {
     let (a, mut b) = UnixStream::pair().expect("socket pair");
     let iters = pick_iters(payload);
+    let warmup = warmup_iters(payload);
     let mut buf = vec![0u8; payload];
 
     let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(1);
@@ -198,6 +170,13 @@ fn bench_unix_transfer(payload: usize) -> Result {
             writer.write_all(&data).expect("write");
         }
     });
+
+    for i in 0..warmup {
+        buf.fill(i as u8);
+        tx.send(buf.clone()).expect("send");
+        b.read_exact(&mut buf).expect("read");
+        std::hint::black_box(buf[0]);
+    }
 
     let start = Instant::now();
     for i in 0..iters {
@@ -218,11 +197,78 @@ fn bench_unix_transfer(payload: usize) -> Result {
 }
 
 #[cfg(not(windows))]
-fn pick_iters(payload: usize) -> usize {
-    match payload {
-        p if p <= 1024 => 100_000,
-        p if p <= 65_536 => 10_000,
-        p if p <= 1_048_576 => 1_000,
-        _ => 100,
+fn run_benchmarks() {
+    let (latency_us, latency_iters) = bench_notify_latency();
+
+    let sizes: &[usize] = &[1, 64, 1024, 10240, 1048576];
+    let mut rows: Vec<(usize, Result, Result)> = Vec::new();
+
+    const SAMPLES: usize = 5;
+
+    for &payload_kb in sizes {
+        let nominal = payload_kb * 1024;
+        let aligned = page_align(nominal);
+
+        let mut zinc_best = 0.0_f64;
+        let mut socket_best = 0.0_f64;
+        let mut zinc_data = 0.0_f64;
+        let mut socket_data = 0.0_f64;
+
+        for s in 0..SAMPLES {
+            let (z, sk) = if s % 2 == 0 {
+                (bench_zinc_transfer(nominal, aligned), bench_unix_transfer(nominal))
+            } else {
+                let sk = bench_unix_transfer(nominal);
+                let z = bench_zinc_transfer(nominal, aligned);
+                (z, sk)
+            };
+            if z.gbps > zinc_best { zinc_best = z.gbps; zinc_data = z.total_gb; }
+            if sk.gbps > socket_best { socket_best = sk.gbps; socket_data = sk.total_gb; }
+        }
+
+        rows.push((payload_kb,
+            Result { gbps: zinc_best, total_gb: zinc_data },
+            Result { gbps: socket_best, total_gb: socket_data },
+        ));
     }
+
+    const GRN: &str = "\x1b[32m";
+    const RED: &str = "\x1b[31m";
+    const RST: &str = "\x1b[0m";
+    const BLD: &str = "\x1b[1m";
+
+    println!("\n\n{}══════════════════════════════════════════════════════{}", BLD, RST);
+    println!("{}        Zinc vs Unix Socket — Throughput{}", BLD, RST);
+    println!("{} Notify/wait latency: {:.1} µs avg ({} iters){}", BLD, latency_us, latency_iters, RST);
+    println!("{}══════════════════════════════════════════════════════{}", BLD, RST);
+    println!(" {:<8} {:>12} {:>12} {:>6} {:>10}", "Payload", "Zinc", "Socket", "Ratio", "Data");
+    println!("{0:\u{2500}^10} {0:\u{2500}^14} {0:\u{2500}^14} {0:\u{2500}^7} {0:\u{2500}^12}", "");
+
+    for (kb, z, s) in &rows {
+        let label = fmt_size(*kb);
+        let ratio = z.gbps / s.gbps;
+        let total = (z.total_gb + s.total_gb) / 2.0;
+
+        println!(
+            " {:<8} {}{:>10.2} GB/s{} {}{:>10.2} GB/s{} {:>5.0}x {:>8.2} GB",
+            label,
+            GRN, z.gbps, RST,
+            RED, s.gbps, RST,
+            ratio, total,
+        );
+    }
+
+    println!("{0:\u{2500}^10} {0:\u{2500}^14} {0:\u{2500}^14} {0:\u{2500}^7} {0:\u{2500}^12}", "");
+    println!(
+        "{}Zinc: memory-bandwidth-bound. Socket: kernel-copy-bound (~1.4 GB/s).{}",
+        GRN, RST
+    );
+    println!(
+        "{}Zero kernel data copies — same physical pages, both processes.{}",
+        GRN, RST
+    );
+    println!(
+        "{}Method: min-time (max GB/s) across {} samples, alternating order.{}",
+        RST, SAMPLES, RST
+    );
 }
