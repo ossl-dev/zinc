@@ -3,7 +3,11 @@ title: "Introduction"
 description: "Zinc gives processes in any language direct access to the same physical memory. No serialization. No copies. No kernel round-trips."
 ---
 
-Zinc maps the same physical RAM pages into multiple processes across different programming languages. Every language adapter gets a zero-copy view of identical bytes.
+## What is Zinc?
+
+Zinc is a shared memory library. It lets programs in different languages share data by reading the same physical memory. No copies. No serialization. No network overhead.
+
+Normally, sharing data between programs means copying it — through a socket, pipe, or file. For large data (megabytes or gigabytes), those copies are slow and wasteful. Zinc eliminates them. It maps the same RAM pages into every participating process. One program writes, the others read — instantly.
 
 The core is written in Rust and compiles to a shared library (`libzinc_core.so` on Linux, `.dylib` on macOS, `.dll` on Windows) with a stable C ABI. Every language adapter (Rust, Python, Go, Node.js, Bun, Deno, C++, Java, C#) calls the same eight C functions through its native FFI mechanism. No logic is reimplemented in adapters. No serialization format is imposed. The shared memory is the API.
 
