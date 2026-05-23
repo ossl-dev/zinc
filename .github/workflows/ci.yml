@@ -6,6 +6,7 @@ on:
       - '.gitignore'
       - '.moon/**'
       - 'adapters/**/README.md'
+      - 'docs/**'
   pull_request:
     paths:
       - 'core/**'

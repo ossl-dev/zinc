@@ -1,3 +1,5 @@
+<img src="ZINC.png" alt="Zinc logo" width="100%" height="auto"/>
+
 # Zinc - Universal Shared Memory Library
 
 Zinc gives processes in **any language** direct access to the same physical memory — across Rust, Python, Go, Node.js, Bun, Deno, C++, Java, C#, and more. No serialization, no copies, no kernel round-trips. Just `mmap` under the hood and a zero-copy view of the same bytes in every language.
