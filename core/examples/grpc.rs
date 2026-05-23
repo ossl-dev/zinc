@@ -245,7 +245,7 @@ fn bench_grpc_transfer(payload: usize) -> Result {
 // ── Orchestrator ────────────────────────────────────────────────
 
 fn run_benchmarks() {
-    let (latency_us, latency_iters) = bench_notify_latency();
+    let (_latency_us, _latency_iters) = bench_notify_latency();
 
     // Skip 1 GB for gRPC — protobuf serialization would be impractically slow.
     let sizes: &[usize] = &[1, 64, 1024, 10240];
@@ -283,28 +283,40 @@ fn run_benchmarks() {
     const GRN: &str = "\x1b[32m";
     const RED: &str = "\x1b[31m";
     const RST: &str = "\x1b[0m";
-    const BLD: &str = "\x1b[1m";
 
-    println!("\n\n{}══════════════════════════════════════════════════════{}", BLD, RST);
-    println!("{}         Zinc vs gRPC (prost + TCP) — Throughput{}", BLD, RST);
-    println!("{} Notify/wait latency: {:.1} µs avg ({} iters){}", BLD, latency_us, latency_iters, RST);
-    println!("{}══════════════════════════════════════════════════════{}", BLD, RST);
-    println!(" {:<8} {:>12} {:>12} {:>6} {:>10}", "Payload", "Zinc", "gRPC", "Ratio", "Data");
-    println!("{0:\u{2500}^10} {0:\u{2500}^14} {0:\u{2500}^14} {0:\u{2500}^7} {0:\u{2500}^12}", "");
+    println!("\n\n{}══════════════════════════════════════════════════════", GRN);
+    println!("         Zinc vs gRPC (prost + TCP) \u{2014} Throughput");
+    println!("{0}══════════════════════════════════════════════════════{1}", GRN, RST);
+
+    const H: &str = "\u{2500}";
+    let c = [H.repeat(10), H.repeat(17), H.repeat(17), H.repeat(8), H.repeat(13)];
+    println!("\u{250c}{}\u{252c}{}\u{252c}{}\u{252c}{}\u{252c}{}\u{2510}", c[0], c[1], c[2], c[3], c[4]);
+    println!(
+        "\u{2502} {:<8} \u{2502} {:>15} \u{2502} {:>15} \u{2502} {:>6} \u{2502} {:>11} \u{2502}",
+        "Payload", "Zinc", "gRPC", "Ratio", "Data"
+    );
+    println!("\u{251c}{}\u{253c}{}\u{253c}{}\u{253c}{}\u{253c}{}\u{2524}", c[0], c[1], c[2], c[3], c[4]);
 
     for (kb, z, g) in &rows {
         let label = fmt_size(*kb);
         let ratio = z.gbps / g.gbps;
         let total = (z.total_gb + g.total_gb) / 2.0;
 
+        let (z_color, g_color) = if ratio >= 0.98 && ratio <= 1.02 {
+            (GRN, GRN)
+        } else if ratio >= 1.0 {
+            (GRN, RED)
+        } else {
+            (RED, GRN)
+        };
+
         println!(
-            " {:<8} {}{:>10.2} GB/s{} {}{:>10.2} GB/s{} {:>5.0}x {:>8.2} GB",
-            label, GRN, z.gbps, RST, RED, g.gbps, RST, ratio, total,
+            "\u{2502} {:<8} \u{2502} {}{:>10.2} GB/s{} \u{2502} {}{:>10.2} GB/s{} \u{2502} {:>5.0}x \u{2502} {:>8.2} GB \u{2502}",
+            label, z_color, z.gbps, RST, g_color, g.gbps, RST, ratio, total,
         );
     }
 
-    println!("{0:\u{2500}^10} {0:\u{2500}^14} {0:\u{2500}^14} {0:\u{2500}^7} {0:\u{2500}^12}", "");
-    println!("{}Zinc: zero-copy shared memory (memory-bandwidth-bound).{}", GRN, RST);
+    println!("\u{2514}{}\u{2534}{}\u{2534}{}\u{2534}{}\u{2534}{}\u{2518}", c[0], c[1], c[2], c[3], c[4]);
     println!("{}gRPC: protobuf serialize + TCP stack + deserialize — O(n) overhead.{}", RED, RST);
     println!(
         "{}Method: min-time (max GB/s) across {} samples, alternating order.{}",

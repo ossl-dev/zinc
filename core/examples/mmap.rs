@@ -440,14 +440,16 @@ fn run_benchmarks() {
         "{}══════════════════════════════════════════════════════{}",
         BLD, RST
     );
+    const H: &str = "\u{2500}";
+    let c = [
+        H.repeat(10), H.repeat(17), H.repeat(17), H.repeat(10), H.repeat(13),
+    ];
+    println!("\u{250c}{}\u{252c}{}\u{252c}{}\u{252c}{}\u{252c}{}\u{2510}", c[0], c[1], c[2], c[3], c[4]);
     println!(
-        " {:<8} {:>12} {:>12} {:>8} {:>10}",
+        "\u{2502} {:<8} \u{2502} {:>15} \u{2502} {:>15} \u{2502} {:>8} \u{2502} {:>11} \u{2502}",
         "Payload", "Zinc", "Mmap", "Ratio", "Data"
     );
-    println!(
-        "{0:\u{2500}^10} {0:\u{2500}^14} {0:\u{2500}^14} {0:\u{2500}^9} {0:\u{2500}^12}",
-        ""
-    );
+    println!("\u{251c}{}\u{253c}{}\u{253c}{}\u{253c}{}\u{253c}{}\u{2524}", c[0], c[1], c[2], c[3], c[4]);
 
     for (kb, z, m) in &rows {
         let label = fmt_size(*kb);
@@ -461,15 +463,12 @@ fn run_benchmarks() {
         };
 
         println!(
-            " {:<8} {}{:>10.2} GB/s{} {}{:>10.2} GB/s{} {:>7.2}x {:>8.2} GB",
+            "\u{2502} {:<8} \u{2502} {}{:>10.2} GB/s{} \u{2502} {}{:>10.2} GB/s{} \u{2502} {:>7.2}x \u{2502} {:>8.2} GB \u{2502}",
             label, z_color, z.gbps, RST, m_color, m.gbps, RST, ratio, total,
         );
     }
 
-    println!(
-        "{0:\u{2500}^10} {0:\u{2500}^14} {0:\u{2500}^14} {0:\u{2500}^9} {0:\u{2500}^12}",
-        ""
-    );
+    println!("\u{2514}{}\u{2534}{}\u{2534}{}\u{2534}{}\u{2534}{}\u{2518}", c[0], c[1], c[2], c[3], c[4]);
     println!(
         "{}Zinc and raw mmap: identical kernel primitives (shm_open+mmap+futex).{}",
         GRN, RST
