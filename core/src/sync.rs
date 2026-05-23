@@ -50,7 +50,7 @@ pub fn wait(addr: &AtomicU32, expected: u32, timeout_ms: u32) -> Result<()> {
     #[cfg(not(target_os = "linux"))]
     {
         // Adaptive wait: spin briefly, then yield, then check timeout.
-        // On macOS, ulock is private API; Windows uses events (TBD).
+        // On macOS, ulock is private API.
         let start = std::time::Instant::now();
         let timeout = std::time::Duration::from_millis(timeout_ms as u64);
         let mut spins: u32 = 0;

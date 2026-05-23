@@ -34,7 +34,7 @@ cd zinc
 cargo build --release --manifest-path core/Cargo.toml
 ```
 
-This produces `core/target/release/libzinc_core.{so,dylib,dll}` and generates `include/zinc.h`.
+This produces `core/target/release/libzinc_core.{so,dylib}` and generates `include/zinc.h`.
 
 ## Running tests
 
@@ -84,7 +84,7 @@ No `unwrap()` calls are allowed in core library code. The CI build enforces this
 
 Every adapter follows the same pattern:
 
-1. Load `libzinc_core.{so,dylib,dll}` via the language's FFI mechanism.
+1. Load `libzinc_core.{so,dylib}` via the language's FFI mechanism.
 2. Read `include/zinc.h` (or replicate the function signatures) to define FFI bindings.
 3. Wrap the C functions in a language-native `SharedRegion` class or module.
 4. Provide `create`, `open`, data access, `notify`, `wait`, and `close` methods.
@@ -121,7 +121,7 @@ The `sync.rs` module handles notify/wait and is platform-specific. The Linux bac
 All changes go through pull requests. The review focuses on:
 
 - Correctness of the ownership model (does the new code handle create/open/close/unlink correctly?)
-- Platform portability (does the new code compile on all three platforms?)
+- Platform portability (does the new code compile on Linux and macOS?)
 - Performance (does the hot path avoid allocation and system calls?)
 - Error handling (are all error paths covered, and do they map to appropriate `ZincError` values?)
 
@@ -130,7 +130,7 @@ All changes go through pull requests. The review focuses on:
 Releases follow semantic versioning with a single version across all packages. The release checklist:
 
 1. Update version numbers in `core/Cargo.toml` and all adapter package files.
-2. Run the full test suite on Linux, macOS, and Windows.
+2. Run the full test suite on Linux and macOS.
 3. Build the core in release mode for all platforms.
 4. Run the integration test suite (all adapters against the release build).
 5. Tag the release (`git tag v<major>.<minor>.<patch>`).

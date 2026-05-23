@@ -3,7 +3,6 @@ import { join } from "@std/path";
 const suffix = {
   darwin: "dylib",
   linux: "so",
-  windows: "dll",
 }[Deno.build.os];
 
 const libPath = join(

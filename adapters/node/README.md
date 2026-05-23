@@ -73,4 +73,5 @@ npm publish
 |---|---|
 | Linux | ✅ |
 | macOS | ✅ |
-| Windows | ⏳ (backend stub) |
+
+> Windows is not supported. Zinc requires POSIX `shm_open` + `mmap`.

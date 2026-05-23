@@ -20,6 +20,6 @@ else:
         uint32_t zinc_version(void);
     """)
 
-_suffix = {"Linux": "so", "Darwin": "dylib", "Windows": "dll"}[platform.system()]
+_suffix = {"Linux": "so", "Darwin": "dylib"}[platform.system()]
 _lib_path = pathlib.Path(__file__).parent.parent.parent.parent / "core" / "target" / "release" / f"libzinc_core.{_suffix}"
 lib = ffi.dlopen(str(_lib_path))

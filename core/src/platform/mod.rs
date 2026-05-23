@@ -4,14 +4,10 @@ pub(crate) mod unix;
 pub(crate) mod linux;
 #[cfg(target_os = "macos")]
 pub(crate) mod macos;
-#[cfg(target_os = "windows")]
-pub(crate) mod windows;
-
 use std::ptr::NonNull;
 
 pub(crate) struct MappedFile {
     pub ptr: NonNull<u8>,
-    #[cfg_attr(windows, allow(dead_code))]
     pub len: usize,
 }
 
@@ -28,7 +24,6 @@ impl MappedFile {
 }
 
 pub(crate) enum CreateOrOpen {
-    #[cfg_attr(windows, allow(dead_code))]
     Create(usize),
     Open,
 }
@@ -41,12 +36,8 @@ pub(crate) fn map(name: &str, mode: CreateOrOpen) -> crate::Result<MappedFile> {
 pub(crate) fn map(name: &str, mode: CreateOrOpen) -> crate::Result<MappedFile> {
     macos::map(name, mode)
 }
-#[cfg(target_os = "windows")]
-pub(crate) fn map(name: &str, mode: CreateOrOpen) -> crate::Result<MappedFile> {
-    windows::map(name, mode)
-}
-#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-compile_error!("Zinc: unsupported platform");
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+compile_error!("Zinc is not supported on this platform. Supported platforms: Linux (x86_64, aarch64) and macOS (x86_64, aarch64). Windows is not supported (POSIX shm_open+mmap required).");
 
 #[cfg(target_os = "linux")]
 pub(crate) fn unmap(_f: &mut MappedFile) -> crate::Result<()> {
@@ -56,11 +47,6 @@ pub(crate) fn unmap(_f: &mut MappedFile) -> crate::Result<()> {
 pub(crate) fn unmap(_f: &mut MappedFile) -> crate::Result<()> {
     macos::unmap(_f)
 }
-#[cfg(target_os = "windows")]
-pub(crate) fn unmap(_f: &mut MappedFile) -> crate::Result<()> {
-    windows::unmap(_f)
-}
-
 #[cfg(target_os = "linux")]
 pub(crate) fn unlink(name: &str) -> crate::Result<()> {
     linux::unlink(name)
@@ -68,8 +54,4 @@ pub(crate) fn unlink(name: &str) -> crate::Result<()> {
 #[cfg(target_os = "macos")]
 pub(crate) fn unlink(name: &str) -> crate::Result<()> {
     macos::unlink(name)
-}
-#[cfg(target_os = "windows")]
-pub(crate) fn unlink(name: &str) -> crate::Result<()> {
-    windows::unlink(name)
 }

@@ -107,4 +107,4 @@ Without these, the import will fail with a permission error.
 
 ## FFI details
 
-The library path is resolved relative to the adapter's Deno module location. The suffix is determined from `Deno.build.os`: `.dylib` on macOS, `.so` on Linux, `.dll` on Windows. Pointer values are represented as `Deno.PointerValue` (which is `number | null` on 32-bit and `bigint | null` on 64-bit).
+The library path is resolved relative to the adapter's Deno module location. The suffix is determined from `Deno.build.os`: `.dylib` on macOS, `.so` on Linux. `windows` is not mapped — Zinc does not support Windows. Pointer values are represented as `Deno.PointerValue` (which is `number | null` on 32-bit and `bigint | null` on 64-bit).

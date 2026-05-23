@@ -80,4 +80,5 @@ dotnet nuget push bin/Release/Zinc.0.1.0.nupkg
 |---|---|
 | Linux | ✅ |
 | macOS | ✅ |
-| Windows | ⏳ |
+
+> Windows is not supported. Zinc requires POSIX `shm_open` + `mmap`.

@@ -13,7 +13,6 @@ The notify/wait roundtrip measures the time from a writer calling `notify()` to 
 |----------|-----|-----|-------------------|
 | Linux (futex) | < 1 microsecond | < 3 microseconds | `criterion` on AMD EPYC |
 | macOS (spin loop) | ~2 microseconds | ~10 microseconds | `criterion` on Apple M3 |
-| Windows | N/A (stub) | N/A | N/A |
 
 The Linux futex path is near the hardware minimum: a single syscall in the wake path, and another syscall in the waiter path when the kernel unparks it. The macOS spin loop is slower because the waiting thread must poll.
 

@@ -1,20 +1,12 @@
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use redis::Commands;
 
-#[cfg(not(windows))]
-use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(not(windows))]
-use std::sync::Arc;
-#[cfg(not(windows))]
-use std::thread;
-#[cfg(not(windows))]
-use std::time::Duration;
-
-#[cfg(not(windows))]
 use zinc_core::SharedRegion;
 
-#[cfg(not(windows))]
 const NAME: &str = "zr_bench";
 
 struct BenchResult {
@@ -23,25 +15,16 @@ struct BenchResult {
 }
 
 fn main() {
-    #[cfg(not(windows))]
+    let mut conn = match redis::Client::open("redis://127.0.0.1:6379/")
+        .and_then(|c| c.get_connection())
     {
-        let mut conn = match redis::Client::open("redis://127.0.0.1:6379/")
-            .and_then(|c| c.get_connection())
-        {
-            Ok(conn) => conn,
-            Err(_) => {
-                println!("Redis not available on localhost:6379. Start Redis and retry.");
-                return;
-            }
-        };
-        run_benchmarks(&mut conn);
-    }
-
-    #[cfg(windows)]
-    {
-        eprintln!("Zinc benchmark: not supported on Windows");
-        std::process::exit(1);
-    }
+        Ok(conn) => conn,
+        Err(_) => {
+            println!("Redis not available on localhost:6379. Start Redis and retry.");
+            return;
+        }
+    };
+    run_benchmarks(&mut conn);
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -116,7 +99,6 @@ fn bench_redis_transfer(conn: &mut redis::Connection, payload: usize) -> BenchRe
 
 // ── Zinc helpers ────────────────────────────────────────────────
 
-#[cfg(not(windows))]
 fn cleanup(name: &str) {
     let cname = std::ffi::CString::new(format!("/zinc_{name}")).ok();
     if let Some(cn) = cname {
@@ -124,29 +106,24 @@ fn cleanup(name: &str) {
     }
 }
 
-#[cfg(not(windows))]
 fn create_region(name: &str, size: usize) -> zinc_core::SharedRegion {
     cleanup(name);
     SharedRegion::create(name, page_align(size)).expect("create")
 }
 
-#[cfg(not(windows))]
 fn open_region(name: &str) -> zinc_core::SharedRegion {
     SharedRegion::open(name).expect("open")
 }
 
-#[cfg(not(windows))]
 fn page_align(size: usize) -> usize {
     let page = page_size();
     (size + page - 1) & !(page - 1)
 }
 
-#[cfg(not(windows))]
 fn page_size() -> usize {
     unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
 }
 
-#[cfg(not(windows))]
 fn bench_notify_latency() -> (f64, usize) {
     let parent = create_region(NAME, 4096);
     let child = open_region(NAME);
@@ -173,7 +150,6 @@ fn bench_notify_latency() -> (f64, usize) {
     (avg, iters)
 }
 
-#[cfg(not(windows))]
 fn bench_zinc_transfer(nominal: usize, aligned: usize) -> BenchResult {
     let parent = create_region(NAME, aligned);
     let child = open_region(NAME);
@@ -210,7 +186,6 @@ fn bench_zinc_transfer(nominal: usize, aligned: usize) -> BenchResult {
 
 // ── Orchestrator ────────────────────────────────────────────────
 
-#[cfg(not(windows))]
 fn run_benchmarks(conn: &mut redis::Connection) {
     let (latency_us, latency_iters) = bench_notify_latency();
 

@@ -18,9 +18,9 @@ jobs:
   core:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 45 || 15 }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -35,6 +35,4 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
       - run: cargo test --manifest-path core/Cargo.toml
-      - name: Clippy (unix)
-        if: runner.os != 'Windows'
-        run: cargo clippy --manifest-path core/Cargo.toml -- -D warnings
+      - run: cargo clippy --manifest-path core/Cargo.toml -- -D warnings

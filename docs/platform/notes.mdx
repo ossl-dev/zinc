@@ -3,7 +3,9 @@ title: "Platform Notes"
 description: "Platform-specific behavior, limitations, and differences"
 ---
 
-Zinc supports Linux and macOS with full platform backends. Windows support is under development. This page documents the differences between platforms.
+<Warning>Windows is not supported. Zinc requires POSIX shared memory APIs (`shm_open` + `mmap`) that are not available on Windows.</Warning>
+
+This page documents the differences between supported platforms.
 
 ## Linux
 
@@ -54,30 +56,9 @@ This is less efficient than `futex` for long waits. A waiting thread consumes CP
 
 **PIDs.** The `owner_pid` field in the header is set from `std::process::id()`, which on macOS returns the same value as `getpid()`. This is consistent with Linux behavior.
 
-## Windows
-
-The Windows backend is a stub. `zinc_create` and `zinc_open` return `Unsupported` errors. `unmap` and `unlink` are no-ops.
-
-The planned implementation uses `CreateFileMapping` and `MapViewOfFile` for shared memory, and Windows Event objects for synchronization.
-
-```c
-// Planned implementation sketch (not yet available)
-HANDLE hMap = CreateFileMappingA(
-    INVALID_HANDLE_VALUE,
-    NULL,
-    PAGE_READWRITE,
-    size >> 32,
-    size & 0xFFFFFFFF,
-    name
-);
-LPVOID ptr = MapViewOfFile(hMap, FILE_MAP_ALL_ACCESS, 0, 0, size);
-```
-
-**Priority.** Windows support is a known gap and is the next platform priority. Contributions are welcome.
-
 ## Portable code patterns
 
-To write code that works identically on all platforms, follow these guidelines:
+To write code that works identically on both supported platforms, follow these guidelines:
 
 **Allocate generous timeouts.** The Linux futex path is fast; the macOS spin loop is not. If your application needs to run on macOS without modification, use timeouts of at least 1 millisecond and expect the spin loop to consume CPU for the duration.
 
@@ -94,7 +75,5 @@ To write code that works identically on all platforms, follow these guidelines:
 | Linux futex backend | Complete |
 | macOS adaptive wait | Complete |
 | macOS ulock backend | Planned |
-| Windows CreateFileMapping | Planned |
-| Windows Event sync | Planned |
 | Resource limits documentation | In progress |
 | Performance benchmarks per platform | In progress |

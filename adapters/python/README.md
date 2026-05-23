@@ -100,4 +100,5 @@ twine upload dist/*
 |---|---|
 | Linux | ✅ |
 | macOS | ✅ |
-| Windows | ⏳ |
+
+> Windows is not supported. Zinc requires POSIX `shm_open` + `mmap`.

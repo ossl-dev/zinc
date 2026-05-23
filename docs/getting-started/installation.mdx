@@ -3,12 +3,14 @@ title: "Installation"
 description: "Build and install Zinc for your platform and language"
 ---
 
-Zinc ships as a shared library (`libzinc_core`) with per-language adapter packages. Build the core, then install the adapter for your language. Same flow on every platform.
+Zinc ships as a shared library (`libzinc_core`) with per-language adapter packages. Build the core, then install the adapter for your language.
+
+<Warning>Windows is not supported. Zinc uses POSIX shared memory (`shm_open` + `mmap`). There are no plans to add Windows support.</Warning>
 
 ## Prerequisites
 
 - Rust 1.82 or later
-- A C compiler toolchain (Xcode on macOS, build-essential on Linux, Visual Studio on Windows)
+- A C compiler toolchain (Xcode on macOS, build-essential on Linux)
 - For adapter packages: the corresponding language runtime
 
 ## Build the core
@@ -25,7 +27,6 @@ The output appears at:
 
 - Linux: `core/target/release/libzinc_core.so`
 - macOS: `core/target/release/libzinc_core.dylib`
-- Windows: `core/target/release/zinc_core.dll`
 
 The build also generates `include/zinc.h` via cbindgen. This header is the C ABI contract. All adapters derive their FFI bindings from it.
 
@@ -88,7 +89,7 @@ The build also generates `include/zinc.h` via cbindgen. This header is the C ABI
 
 ## Library path
 
-All adapters expect `libzinc_core.{so,dylib,dll}` on the library search path. The easiest approach is to place the compiled library in a standard location:
+All adapters expect `libzinc_core.{so,dylib}` on the library search path. The easiest approach is to place the compiled library in a standard location:
 
 <CodeGroup>
   ```bash Linux
@@ -99,19 +100,16 @@ All adapters expect `libzinc_core.{so,dylib,dll}` on the library search path. Th
   ```bash macOS
   cp core/target/release/libzinc_core.dylib /usr/local/lib/
   ```
-
-  ```bash Windows
-  copy core\target\release\zinc_core.dll C:\Windows\System32\
-  ```
 </CodeGroup>
 
-Alternatively, set the library path via `LD_LIBRARY_PATH` (Linux), `DYLD_LIBRARY_PATH` (macOS), or `PATH` (Windows).
+Alternatively, set the library path via `LD_LIBRARY_PATH` (Linux) or `DYLD_LIBRARY_PATH` (macOS).
 
 ## Platform notes
 
 - **Linux** requires glibc 2.17 or later. The notify/wait backend uses the `futex` syscall.
 - **macOS** uses an adaptive spin-loop for wait (the `ulock` API is private on Darwin).
-- **Windows** currently provides a stub backend. Full `CreateFileMapping` support is in development.
+
+<Warning>Windows is not supported. Zinc uses `shm_open` and `mmap`, which are POSIX APIs not available on Windows.</Warning>
 
 ## Verify the installation
 
@@ -121,4 +119,4 @@ Build the core, then run the C ABI test:
 cargo test --manifest-path core/Cargo.toml
 ```
 
-All tests should pass. On Linux and macOS, the full test suite runs. On Windows, tests that require `shm_open` are skipped.
+All tests should pass on Linux and macOS.

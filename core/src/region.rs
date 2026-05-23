@@ -161,10 +161,7 @@ pub(crate) fn page_size() -> usize {
     use std::sync::OnceLock;
     static PAGE_SIZE: OnceLock<usize> = OnceLock::new();
     *PAGE_SIZE.get_or_init(|| {
-        #[cfg(unix)]
         unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
-        #[cfg(windows)]
-        { 4096 }
     })
 }
 

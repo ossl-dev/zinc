@@ -1,59 +1,38 @@
-#[cfg(not(windows))]
 use std::io::{Read, Write};
-#[cfg(not(windows))]
 use std::net::{TcpListener, TcpStream};
-#[cfg(not(windows))]
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(not(windows))]
 use std::sync::mpsc;
-#[cfg(not(windows))]
 use std::sync::Arc;
-#[cfg(not(windows))]
 use std::thread;
-#[cfg(not(windows))]
 use std::time::{Duration, Instant};
 
-#[cfg(not(windows))]
 use prost::Message;
 
-#[cfg(not(windows))]
 use zinc_core::SharedRegion;
 
 // Protobuf: single rpc Transfer(DataChunk) returns (Empty).
-#[cfg(not(windows))]
 #[derive(Clone, PartialEq, prost::Message)]
 struct DataChunk {
     #[prost(bytes, tag = "1")]
     payload: Vec<u8>,
 }
 
-#[cfg(not(windows))]
 #[derive(Clone, PartialEq, prost::Message)]
 struct EmptyPayload {}
 
 fn main() {
-    #[cfg(not(windows))]
     run_benchmarks();
-
-    #[cfg(windows)]
-    {
-        eprintln!("Zinc vs gRPC benchmark: not supported on Windows");
-        std::process::exit(1);
-    }
 }
 
 // ── Shared constants & helpers ───────────────────────────────────
 
-#[cfg(not(windows))]
 const NAME: &str = "bench_zinc_grpc";
 
-#[cfg(not(windows))]
 struct Result {
     gbps: f64,
     total_gb: f64,
 }
 
-#[cfg(not(windows))]
 fn cleanup(name: &str) {
     let cname = std::ffi::CString::new(format!("/zinc_{name}")).ok();
     if let Some(cn) = cname {
@@ -61,29 +40,24 @@ fn cleanup(name: &str) {
     }
 }
 
-#[cfg(not(windows))]
 fn create_region(name: &str, size: usize) -> zinc_core::SharedRegion {
     cleanup(name);
     SharedRegion::create(name, page_align(size)).expect("create")
 }
 
-#[cfg(not(windows))]
 fn open_region(name: &str) -> zinc_core::SharedRegion {
     SharedRegion::open(name).expect("open")
 }
 
-#[cfg(not(windows))]
 fn page_align(size: usize) -> usize {
     let page = page_size();
     (size + page - 1) & !(page - 1)
 }
 
-#[cfg(not(windows))]
 fn page_size() -> usize {
     unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
 }
 
-#[cfg(not(windows))]
 fn fmt_size(kb: usize) -> String {
     if kb >= 1_048_576 {
         format!("{} GB", kb / 1_048_576)
@@ -96,7 +70,6 @@ fn fmt_size(kb: usize) -> String {
     }
 }
 
-#[cfg(not(windows))]
 fn pick_iters(payload: usize) -> usize {
     match payload {
         p if p <= 1024 => 100_000,
@@ -106,12 +79,10 @@ fn pick_iters(payload: usize) -> usize {
     }
 }
 
-#[cfg(not(windows))]
 fn warmup_iters(payload: usize) -> usize {
     (pick_iters(payload) / 10).max(10)
 }
 
-#[cfg(not(windows))]
 fn pick_iters_grpc(payload: usize) -> usize {
     match payload {
         p if p <= 1024 => 5_000,
@@ -121,14 +92,12 @@ fn pick_iters_grpc(payload: usize) -> usize {
     }
 }
 
-#[cfg(not(windows))]
 fn warmup_iters_grpc(payload: usize) -> usize {
     (pick_iters_grpc(payload) / 5).max(5)
 }
 
 // ── TCP framing helpers — 4-byte LE length prefix + message ──────
 
-#[cfg(not(windows))]
 fn tcp_write_msg(stream: &mut TcpStream, data: &[u8]) -> std::io::Result<()> {
     let len = data.len() as u32;
     stream.write_all(&len.to_le_bytes())?;
@@ -138,7 +107,6 @@ fn tcp_write_msg(stream: &mut TcpStream, data: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
-#[cfg(not(windows))]
 fn tcp_read_msg(stream: &mut TcpStream) -> std::io::Result<Vec<u8>> {
     let mut len_buf = [0u8; 4];
     stream.read_exact(&mut len_buf)?;
@@ -153,7 +121,6 @@ fn tcp_read_msg(stream: &mut TcpStream) -> std::io::Result<Vec<u8>> {
 
 // ── Notify/wait latency ────────────────────────────────────────
 
-#[cfg(not(windows))]
 fn bench_notify_latency() -> (f64, usize) {
     let parent = create_region(NAME, 4096);
     let child = open_region(NAME);
@@ -182,7 +149,6 @@ fn bench_notify_latency() -> (f64, usize) {
 
 // ── Zinc transfer ───────────────────────────────────────────────
 
-#[cfg(not(windows))]
 fn bench_zinc_transfer(nominal: usize, aligned: usize) -> Result {
     let parent = create_region(NAME, aligned);
     let child = open_region(NAME);
@@ -219,7 +185,6 @@ fn bench_zinc_transfer(nominal: usize, aligned: usize) -> Result {
 
 // ── gRPC transfer ──────────────────────────────────────────────
 
-#[cfg(not(windows))]
 fn bench_grpc_transfer(payload: usize) -> Result {
     let (tx_port, rx_port) = mpsc::channel();
 
@@ -279,7 +244,6 @@ fn bench_grpc_transfer(payload: usize) -> Result {
 
 // ── Orchestrator ────────────────────────────────────────────────
 
-#[cfg(not(windows))]
 fn run_benchmarks() {
     let (latency_us, latency_iters) = bench_notify_latency();
 

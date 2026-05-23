@@ -124,4 +124,4 @@ static extern int zinc_wait(nint handle, uint timeoutMs);
 
 The `Bytes()` method creates a `Span<byte>` from the native pointer and capacity using `new Span<byte>((void*)ptr, (int)capacity)`. This is an unsafe context but the adapter encapsulates it. The span is valid only while the `SharedRegion` handle is not disposed.
 
-The `zinc_core` library must be on the system's library search path, or placed in the same directory as the application executable. On Windows, this means `zinc_core.dll` must be discoverable via `PATH` or the application directory. On Linux and macOS, the standard library paths apply.
+The `zinc_core` library must be on the system's library search path, or placed in the same directory as the application executable.

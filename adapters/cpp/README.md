@@ -79,4 +79,5 @@ gh release upload v0.1.0 adapters/cpp/include/zinc.hpp
 |---|---|
 | Linux | ✅ |
 | macOS | ✅ |
-| Windows | ⏳ |
+
+> Windows is not supported. Zinc requires POSIX `shm_open` + `mmap`.

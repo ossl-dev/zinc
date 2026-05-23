@@ -4,6 +4,8 @@
 
 Zinc gives processes in **any language** direct access to the same physical memory — across Rust, Python, Go, Node.js, Bun, Deno, C++, Java, C#, and more. No serialization, no copies, no kernel round-trips. Just `mmap` under the hood and a zero-copy view of the same bytes in every language.
 
+**Windows is not supported.** Zinc is a Linux/macOS library built on POSIX shared memory (`shm_open` + `mmap`).
+
 Think `SharedArrayBuffer`, but cross-language and cross-process.
 
 ---
@@ -78,7 +80,7 @@ That's it. Every language sees the same bytes. Use `Atomics` on a typed array vi
 │   SharedRegion / Ring / Sync         │
 ├──────────────────────────────────────┤
 │   POSIX shm_open + mmap + futex      │  ← Platform layer
-│   (Linux, macOS, Windows stub)       │
+│   (Linux, macOS)                     │
 └──────────────────────────────────────┘
 ```
 
@@ -158,7 +160,7 @@ Version strategy: single `vX.Y.Z` across all packages. All adapters pin to the c
 cargo build --release --manifest-path core/Cargo.toml
 ```
 
-Output: `core/target/release/libzinc_core.{dylib,so,dll}`
+Output: `core/target/release/libzinc_core.{so,dylib}`
 
 ---
 

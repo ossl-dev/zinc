@@ -2,7 +2,7 @@
 
 Zinc is a cross-process shared memory library with a Rust core and C ABI surface, enabling zero-copy data sharing across **any** language — Python, Node.js, Bun, Deno, Go, C++, Java, C#, and more. 
 
-One Rust crate compiles to `libzinc_core.{so,dylib,dll}`. Every language adapter calls the same C ABI via its native FFI mechanism. No reimplementation of logic in adapters.
+One Rust crate compiles to `libzinc_core.{so,dylib}`. Every language adapter calls the same C ABI via its native FFI mechanism. No reimplementation of logic in adapters.
 
 ---
 
@@ -13,7 +13,7 @@ zinc/
 ├── .moon/                     # Moon monorepo config
 │   ├── workspace.yml
 │   └── toolchain.yml
-├── .github/workflows/ci.yml   # 3-platform CI (Linux, macOS, Windows)
+├── .github/workflows/ci.yml   # 2-platform CI (Linux, macOS)
 │
 ├── core/                      # Rust — the heart of everything
 │   ├── Cargo.toml
@@ -32,7 +32,6 @@ zinc/
 │           ├── unix.rs        # Shared POSIX backend (shm_open + mmap)
 │           ├── linux.rs       # Re-exports unix
 │           ├── macos.rs       # Re-exports unix
-│           └── windows.rs     # CreateFileMapping stub
 │
 ├── include/                   # cbindgen output (committed)
 │   └── zinc.h
@@ -137,13 +136,14 @@ Every adapter calls the same 8 C functions in `include/zinc.h`:
 - `parking_lot` mutexes (not std), `CachePadded` atomics
 - Lock-free MPSC ring (256 slots, cache-aligned) for notification tokens
 - Zero heap allocations in hot path (`zinc_ptr`, `zinc_notify`)
-- Linux: futex for kernel-assisted wait. macOS/Windows: adaptive spin with yield
+- Linux: futex for kernel-assisted wait. macOS: adaptive spin with yield
 
 ### Platform Support
 
 - **Linux**: `shm_open` + `mmap` + futex — full support
 - **macOS**: `shm_open` + `mmap` + spin-wait — full support
-- **Windows**: stub (requires `windows-sys` crate for `CreateFileMapping`)
+
+**Windows is not supported.** Zinc is a POSIX-only library. `shm_open` and `mmap` do not exist on Windows, and there are no plans to port them.
 
 ---
 
@@ -161,6 +161,8 @@ The header regenerates automatically on build via `cbindgen`. Never edit `includ
 **Language adapter:**
 
 Rebuild the core first (`cargo build --release`), then test the adapter against the fresh library.
+
+> **Windows is not supported.** Zinc requires `shm_open` and `mmap`, which are POSIX APIs not available on Windows.
 
 ---
 

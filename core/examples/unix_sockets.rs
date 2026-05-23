@@ -1,42 +1,24 @@
-#[cfg(not(windows))]
 use std::io::{Read, Write};
-#[cfg(not(windows))]
 use std::os::unix::net::UnixStream;
-#[cfg(not(windows))]
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(not(windows))]
 use std::sync::Arc;
-#[cfg(not(windows))]
 use std::sync::mpsc;
-#[cfg(not(windows))]
 use std::thread;
-#[cfg(not(windows))]
 use std::time::{Duration, Instant};
 
-#[cfg(not(windows))]
 use zinc_core::SharedRegion;
 
 fn main() {
-    #[cfg(not(windows))]
     run_benchmarks();
-
-    #[cfg(windows)]
-    {
-        eprintln!("Zinc benchmark: not supported on Windows");
-        std::process::exit(1);
-    }
 }
 
-#[cfg(not(windows))]
 const NAME: &str = "bench_zinc";
 
-#[cfg(not(windows))]
 struct Result {
     gbps: f64,
     total_gb: f64,
 }
 
-#[cfg(not(windows))]
 fn cleanup(name: &str) {
     let cname = std::ffi::CString::new(format!("/zinc_{name}")).ok();
     if let Some(cn) = cname {
@@ -44,29 +26,24 @@ fn cleanup(name: &str) {
     }
 }
 
-#[cfg(not(windows))]
 fn create_region(name: &str, size: usize) -> zinc_core::SharedRegion {
     cleanup(name);
     SharedRegion::create(name, page_align(size)).expect("create")
 }
 
-#[cfg(not(windows))]
 fn open_region(name: &str) -> zinc_core::SharedRegion {
     SharedRegion::open(name).expect("open")
 }
 
-#[cfg(not(windows))]
 fn page_align(size: usize) -> usize {
     let page = page_size();
     (size + page - 1) & !(page - 1)
 }
 
-#[cfg(not(windows))]
 fn page_size() -> usize {
     unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
 }
 
-#[cfg(not(windows))]
 fn fmt_size(kb: usize) -> String {
     if kb >= 1_048_576 {
         format!("{} GB", kb / 1_048_576)
@@ -79,7 +56,6 @@ fn fmt_size(kb: usize) -> String {
     }
 }
 
-#[cfg(not(windows))]
 fn pick_iters(payload: usize) -> usize {
     match payload {
         p if p <= 1024 => 100_000,
@@ -89,12 +65,10 @@ fn pick_iters(payload: usize) -> usize {
     }
 }
 
-#[cfg(not(windows))]
 fn warmup_iters(payload: usize) -> usize {
     (pick_iters(payload) / 10).max(10)
 }
 
-#[cfg(not(windows))]
 fn bench_notify_latency() -> (f64, usize) {
     let parent = create_region(NAME, 4096);
     let child = open_region(NAME);
@@ -156,7 +130,6 @@ fn bench_zinc_transfer(nominal: usize, aligned: usize) -> Result {
     }
 }
 
-#[cfg(not(windows))]
 fn bench_unix_transfer(payload: usize) -> Result {
     let (a, mut b) = UnixStream::pair().expect("socket pair");
     let iters = pick_iters(payload);
@@ -196,7 +169,6 @@ fn bench_unix_transfer(payload: usize) -> Result {
     }
 }
 
-#[cfg(not(windows))]
 fn run_benchmarks() {
     let (latency_us, latency_iters) = bench_notify_latency();
 

@@ -92,4 +92,5 @@ git push origin v0.1.0
 |---|---|
 | Linux | ✅ |
 | macOS | ✅ |
-| Windows | ⏳ |
+
+> Windows is not supported. Zinc requires POSIX `shm_open` + `mmap`.

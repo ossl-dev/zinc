@@ -89,11 +89,11 @@ When you encounter an error during development, this table can help identify the
 
 Any system call can produce an OS-level error. These are wrapped in `ZincError::Platform(io::Error)`. The error code returned to the caller is the negated OS error code. Common platform errors:
 
-| Code | Linux/macOS | Windows |
-|------|-------------|---------|
-| `EACCES` (-13) | File permission mismatch | Access denied |
-| `ENFILE` (-23) | System-wide file descriptor limit | Not applicable |
-| `ENOMEM` (-12) | Out of memory for mmap | Out of memory |
-| `EMFILE` (-24) | Process file descriptor limit | Not applicable |
+| Code | Meaning |
+|------|---------|
+| `EACCES` (-13) | File permission mismatch |
+| `ENFILE` (-23) | System-wide file descriptor limit |
+| `ENOMEM` (-12) | Out of memory for mmap |
+| `EMFILE` (-24) | Process file descriptor limit |
 
 Check return values during development. In production, handle at least `AlreadyExists` (fall back to `open`), `NotFound` (retry or log), and `TimedOut` (treat as a heartbeat miss).

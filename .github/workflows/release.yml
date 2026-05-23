@@ -7,7 +7,7 @@ jobs:
   build-core:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -46,5 +46,4 @@ jobs:
             adapters/cpp/include/zinc.hpp
             libzinc_core-Linux/libzinc_core.so
             libzinc_core-macOS/libzinc_core.dylib
-            libzinc_core-Windows/zinc_core.dll
           generate_release_notes: true

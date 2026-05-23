@@ -9,7 +9,7 @@ Zinc is a shared memory library. It lets programs in different languages share d
 
 Normally, sharing data between programs means copying it — through a socket, pipe, or file. For large data (megabytes or gigabytes), those copies are slow and wasteful. Zinc eliminates them. It maps the same RAM pages into every participating process. One program writes, the others read — instantly.
 
-The core is written in Rust and compiles to a shared library (`libzinc_core.so` on Linux, `.dylib` on macOS, `.dll` on Windows) with a stable C ABI. Every language adapter (Rust, Python, Go, Node.js, Bun, Deno, C++, Java, C#) calls the same eight C functions through its native FFI mechanism. No logic is reimplemented in adapters. No serialization format is imposed. The shared memory is the API.
+The core is written in Rust and compiles to a shared library (`libzinc_core.so` on Linux, `.dylib` on macOS) with a stable C ABI. Every language adapter (Rust, Python, Go, Node.js, Bun, Deno, C++, Java, C#) calls the same eight C functions through its native FFI mechanism. No logic is reimplemented in adapters. No serialization format is imposed. The shared memory is the API.
 
 ## The problem
 
@@ -19,7 +19,7 @@ For small payloads under 64KB this tax is negligible (a few microseconds). For p
 
 ## How it works
 
-At the lowest layer, Zinc calls `shm_open` (Linux and macOS) or `CreateFileMapping` (Windows) to create or open a shared memory segment. The resulting file descriptor maps into the process address space with `mmap` or `MapViewOfFile`. The first 64 bytes of every mapping hold a versioned header: the creator's PID, a reference count, a notification sequence counter, and capacity. Everything after the header is user data.
+At the lowest layer, Zinc calls `shm_open` (Linux and macOS) to create or open a shared memory segment. The resulting file descriptor maps into the process address space with `mmap`. The first 64 bytes of every mapping hold a versioned header: the creator's PID, a reference count, a notification sequence counter, and capacity. Everything after the header is user data.
 
 ```mermaid
 flowchart LR
@@ -40,7 +40,6 @@ flowchart LR
     subgraph Platform["Platform layer"]
         Linux["shm_open + mmap\nfutex"]
         Mac["shm_open + mmap\nspin loop"]
-        Win["CreateFileMapping\nEvent"]
     end
 
     Py --> C
@@ -49,7 +48,6 @@ flowchart LR
     C --> Rust
     Rust --> Linux
     Rust --> Mac
-    Rust --> Win
 ```
 
 Each language adapter wraps the C ABI in native types. Python returns a `memoryview` (or a `numpy.ndarray` for numeric data). Go returns a `[]byte` slice backed by the mmap. Node returns a `Buffer`. All of them point to the same physical pages. No copies.
@@ -84,4 +82,6 @@ Zinc does not provide built-in synchronization beyond basic notify/wait primitiv
 
 ## Project status
 
-Zinc is in active development. The core API is stable. Linux and macOS have full platform backends. The Windows backend is a stub. All nine language adapters implement the full API surface. The notify/wait roundtrip latency target is under 5 microseconds on Linux.
+Zinc is in active development. The core API is stable. Linux and macOS have full platform backends. All nine language adapters implement the full API surface. The notify/wait roundtrip latency target is under 5 microseconds on Linux.
+
+<Warning>Windows is not supported. Zinc requires POSIX shared memory APIs (`shm_open` + `mmap`) that are not available on Windows.</Warning>

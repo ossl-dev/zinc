@@ -1,52 +1,33 @@
-#[cfg(not(windows))]
 use std::ffi::CString;
-#[cfg(not(windows))]
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-#[cfg(not(windows))]
 use std::sync::Arc;
-#[cfg(not(windows))]
 use std::thread;
-#[cfg(not(windows))]
 use std::time::{Duration, Instant};
 
-#[cfg(not(windows))]
 use zinc_core::SharedRegion;
 
 fn main() {
-    #[cfg(not(windows))]
     run_benchmarks();
-
-    #[cfg(windows)]
-    {
-        eprintln!("Zinc mmap benchmark: not supported on Windows");
-        std::process::exit(1);
-    }
 }
 
-#[cfg(not(windows))]
 const ZINC_NAME: &str = "bench_zinc_mmap";
 
-#[cfg(not(windows))]
 const MMAP_NAME: &str = "bench_raw_mmap";
 
-#[cfg(not(windows))]
 struct BenchResult {
     gbps: f64,
     total_gb: f64,
 }
 
-#[cfg(not(windows))]
 fn page_size() -> usize {
     unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
 }
 
-#[cfg(not(windows))]
 fn page_align(size: usize) -> usize {
     let page = page_size();
     (size + page - 1) & !(page - 1)
 }
 
-#[cfg(not(windows))]
 fn fmt_size(kb: usize) -> String {
     if kb >= 1_048_576 {
         format!("{} GB", kb / 1_048_576)
@@ -59,7 +40,6 @@ fn fmt_size(kb: usize) -> String {
     }
 }
 
-#[cfg(not(windows))]
 fn pick_iters(payload: usize) -> usize {
     match payload {
         p if p <= 1024 => 100_000,
@@ -69,19 +49,16 @@ fn pick_iters(payload: usize) -> usize {
     }
 }
 
-#[cfg(not(windows))]
 fn warmup_iters(payload: usize) -> usize {
     (pick_iters(payload) / 10).max(10)
 }
 
-#[cfg(not(windows))]
 fn zinc_cleanup() {
     if let Ok(cn) = CString::new(format!("/zinc_{ZINC_NAME}")) {
         unsafe { libc::shm_unlink(cn.as_ptr()) };
     }
 }
 
-#[cfg(not(windows))]
 fn mmap_cleanup() {
     if let Ok(cn) = CString::new(format!("/mmap_{MMAP_NAME}")) {
         unsafe { libc::shm_unlink(cn.as_ptr()) };
@@ -90,7 +67,6 @@ fn mmap_cleanup() {
 
 // ── Raw mmap wrapper ──────────────────────────────────────────────
 
-#[cfg(not(windows))]
 struct MmapRegion {
     base: *mut u8,
     map_len: usize,
@@ -100,7 +76,6 @@ struct MmapRegion {
     name: CString,
 }
 
-#[cfg(not(windows))]
 impl MmapRegion {
     fn create(name: &str, data_size: usize) -> Self {
         let cname = CString::new(format!("/mmap_{name}")).expect("valid name");
@@ -240,10 +215,8 @@ impl MmapRegion {
                 return match err.raw_os_error() {
                     Some(libc::ETIMEDOUT) => Err(()),
                     Some(libc::EAGAIN) => {
-                        self.last_seq.store(
-                            seq.load(Ordering::Relaxed),
-                            Ordering::Release,
-                        );
+                        self.last_seq
+                            .store(seq.load(Ordering::Relaxed), Ordering::Release);
                         Ok(())
                     }
                     _ => panic!("futex WAIT error: {err}"),
@@ -279,7 +252,6 @@ impl MmapRegion {
     }
 }
 
-#[cfg(not(windows))]
 impl Drop for MmapRegion {
     fn drop(&mut self) {
         if self.map_len > 0 {
@@ -293,7 +265,6 @@ impl Drop for MmapRegion {
 
 // ── Notify/wait latency ────────────────────────────────────────
 
-#[cfg(not(windows))]
 fn bench_notify_latency() -> (f64, usize) {
     zinc_cleanup();
     let parent = SharedRegion::create(ZINC_NAME, page_size()).expect("create parent");
@@ -323,7 +294,6 @@ fn bench_notify_latency() -> (f64, usize) {
 
 // ── Benchmark runners ──────────────────────────────────────────
 
-#[cfg(not(windows))]
 fn bench_zinc_transfer(nominal: usize, aligned: usize) -> BenchResult {
     zinc_cleanup();
     let parent = SharedRegion::create(ZINC_NAME, aligned).expect("create parent");
@@ -360,7 +330,6 @@ fn bench_zinc_transfer(nominal: usize, aligned: usize) -> BenchResult {
     }
 }
 
-#[cfg(not(windows))]
 fn bench_mmap_transfer(nominal: usize, aligned: usize) -> BenchResult {
     mmap_cleanup();
     let parent = MmapRegion::create(MMAP_NAME, aligned);
@@ -398,7 +367,6 @@ fn bench_mmap_transfer(nominal: usize, aligned: usize) -> BenchResult {
 
 // ── Orchestrator ────────────────────────────────────────────────
 
-#[cfg(not(windows))]
 fn run_benchmarks() {
     let (latency_us, latency_iters) = bench_notify_latency();
 
@@ -419,7 +387,10 @@ fn run_benchmarks() {
         for s in 0..SAMPLES {
             // Alternate order to cancel first-run bias.
             let (z, m) = if s % 2 == 0 {
-                (bench_zinc_transfer(nominal, aligned), bench_mmap_transfer(nominal, aligned))
+                (
+                    bench_zinc_transfer(nominal, aligned),
+                    bench_mmap_transfer(nominal, aligned),
+                )
             } else {
                 let m = bench_mmap_transfer(nominal, aligned);
                 let z = bench_zinc_transfer(nominal, aligned);
@@ -435,9 +406,16 @@ fn run_benchmarks() {
             }
         }
 
-        rows.push((payload_kb,
-            BenchResult { gbps: zinc_best, total_gb: zinc_data },
-            BenchResult { gbps: mmap_best, total_gb: mmap_data },
+        rows.push((
+            payload_kb,
+            BenchResult {
+                gbps: zinc_best,
+                total_gb: zinc_data,
+            },
+            BenchResult {
+                gbps: mmap_best,
+                total_gb: mmap_data,
+            },
         ));
     }
 
@@ -484,11 +462,7 @@ fn run_benchmarks() {
 
         println!(
             " {:<8} {}{:>10.2} GB/s{} {}{:>10.2} GB/s{} {:>7.2}x {:>8.2} GB",
-            label,
-            z_color, z.gbps, RST,
-            m_color, m.gbps, RST,
-            ratio,
-            total,
+            label, z_color, z.gbps, RST, m_color, m.gbps, RST, ratio, total,
         );
     }
 
@@ -509,7 +483,7 @@ fn run_benchmarks() {
         GRN, RST
     );
     println!(
-        "{}Method: min-time (max GB/s) across {} samples, alternating order. Industry standard.{}",
+        "{}Method: min-time (max GB/s) across {} samples, alternating order.{}",
         RST, SAMPLES, RST
     );
 }
