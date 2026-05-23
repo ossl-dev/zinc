@@ -118,6 +118,10 @@ cargo run --release --example unix_sockets --manifest-path core/Cargo.toml
 
 Measures notify/wait latency and sequential transfer throughput for Zinc shared memory vs Unix domain socket pairs. Zinc is memory-bandwidth-bound (~60 GB/s); sockets are kernel-copy-bound (~1.4 GB/s).
 
+<Frame>
+  <img src="/images/example-benchmarks/unix_sockets.png" alt="Zinc vs Unix sockets benchmark output" />
+</Frame>
+
 ### Zinc vs raw mmap
 
 ```bash
@@ -125,6 +129,10 @@ cargo run --release --example mmap --manifest-path core/Cargo.toml
 ```
 
 Compares Zinc against raw `shm_open` + `mmap` + `ftruncate` with manual futex synchronization. Throughput is identical — both use the same kernel primitives. Any deviation from ratio 1.00 is OS scheduling noise, not a Zinc overhead. The raw path requires explicit lifecycle management: `shm_open`, `ftruncate`, `mmap`, `shm_unlink`, and manual notify/wait via `futex`. Zinc adds automatic creation, reference counting, and cleanup on drop.
+
+<Frame>
+  <img src="/images/example-benchmarks/mmap.png" alt="Zinc vs raw mmap benchmark output" />
+</Frame>
 
 ### Zinc vs gRPC
 
@@ -134,6 +142,10 @@ cargo run --release --example grpc --manifest-path core/Cargo.toml
 
 Compares Zinc against protobuf-serialized messages over TCP (length-prefixed framing, same wire format as gRPC). Demonstrates serialization cost: Zinc's zero-copy path takes 0 ms to "transfer" bytes; the gRPC path pays protobuf encode/decode and kernel TCP stack overhead.
 
+<Frame>
+  <img src="/images/example-benchmarks/grpc.png" alt="Zinc vs gRPC benchmark output" />
+</Frame>
+
 ### Zinc vs Redis
 
 ```bash
@@ -141,6 +153,14 @@ cargo run --release --example redis --manifest-path core/Cargo.toml
 ```
 
 Compares Zinc against Redis SET/GET on localhost. Requires Redis running on `127.0.0.1:6379`. Shows network-stack overhead even on loopback — data goes through client library → kernel TCP → Redis process → and back.
+
+<Frame>
+  <img src="/images/example-benchmarks/redis.png" alt="Zinc vs Redis benchmark output" />
+</Frame>
+
+<Info>
+  Results shown above were measured on a MacBook Pro with Apple M2 Pro chip, 16 GB RAM, and macOS Tahoe 26.5. Performance will vary across platforms, see the benchmark methodology section for details on measurement approach.
+</Info>
 
 ## Benchmarks
 
