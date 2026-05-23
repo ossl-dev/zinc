@@ -98,5 +98,14 @@
   },
   "fonts": {
     "family": "Space Grotesk"
-  }
+  },
+  "navbar": {
+    "links": [
+      {
+        "href": "https://github.com/Mohammed-Aman-Khan/zinc",
+        "label": "GitHub"
+      }
+    ]
+  },
+  "logo": "/docs/images/logo.png"
 }
