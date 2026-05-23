@@ -75,8 +75,28 @@
   },
   "footer": {
     "socials": {
-      "github": "https://github.com/aspect-build/zinc"
+      "github": "https://github.com/Mohammed-Aman-Khan/zinc"
     }
   },
-  "description": "Universal Shared Memory"
+  "description": "Universal Shared Memory",
+  "seo": {
+    "indexing": "all"
+  },
+  "contextual": {
+    "options": [
+      "copy",
+      "view",
+      "add-mcp",
+      "vscode",
+      "mcp",
+      "claude",
+      "windsurf",
+      "chatgpt",
+      "cursor"
+    ],
+    "display": "toc"
+  },
+  "fonts": {
+    "family": "Space Grotesk"
+  }
 }
