@@ -107,6 +107,13 @@
       }
     ]
   },
-  "logo": "/docs/images/logo.png",
-  "favicon": "/images/logo.png"
+  "logo": "/images/logo.png",
+  "favicon": "/images/logo.png",
+  "styling": {
+    "eyebrows": "breadcrumbs",
+    "latex": true
+  },
+  "icons": {
+    "library": "lucide"
+  }
 }
