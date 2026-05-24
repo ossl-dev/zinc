@@ -121,35 +121,14 @@ Target: notify/wait roundtrip < 5µs on Linux.
 | Language | Mechanism | Package | Path | README |
 |---|---|---|---|---|
 | Rust | Direct crate | `crates.io` (pending) | `core/` | — |
-| Python | cffi + numpy | `pip install zinc-shm` | `adapters/python/` | [README](adapters/python/README.md) |
-| Go | cgo | `go get github.com/aspect-build/zinc/adapters/go` | `adapters/go/` | [README](adapters/go/README.md) |
-| Node.js | napi-rs | `npm install @aspect-build/zinc` | `adapters/node/` | [README](adapters/node/README.md) |
-| Bun | bun:ffi | `bun add @aspect-build/zinc-bun` | `adapters/bun/` | [README](adapters/bun/README.md) |
-| Deno | Deno.dlopen | `deno add @aspect-build/zinc` | `adapters/deno/` | [README](adapters/deno/README.md) |
-| C++ | Header-only RAII | GitHub Release | `adapters/cpp/` | [README](adapters/cpp/README.md) |
-| Java | JNA | `mvn central` (pending) | `adapters/java/` | [README](adapters/java/README.md) |
-| C# | P/Invoke | `dotnet add package Zinc` | `adapters/csharp/` | [README](adapters/csharp/README.md) |
-
----
-
-## Release
-
-Each release publishes:
-
-| Artifact | Registry | Trigger |
-|---|---|---|
-| `libzinc_core.{so,dylib,dll}` | GitHub Release | Tag `v*` |
-| `adapters/cpp/include/zinc.hpp` | GitHub Release | Tag `v*` |
-| Rust crate `zinc-core` | crates.io | Tag `core/v*` |
-| Python package `zinc-shm` | PyPI | `python -m build && twine upload` |
-| Go module | Go proxy | Tag `go/v*` |
-| npm package `@aspect-build/zinc` | npm | `cd adapters/node && npm publish` |
-| npm package `@aspect-build/zinc-bun` | npm | `cd adapters/bun && bun publish` |
-| Deno package `@aspect-build/zinc` | JSR | `cd adapters/deno && deno publish` |
-| Java package `dev.zinc:zinc-java` | Maven Central | `cd adapters/java && mvn deploy` |
-| C# package `Zinc` | NuGet | `cd adapters/csharp && dotnet nuget push` |
-
-Version strategy: single `vX.Y.Z` across all packages. All adapters pin to the core version they were built against via `zinc_version()` C ABI function.
+| Python | cffi + numpy | `pip install zinc-shm` (pending) | `adapters/python/` | [README](adapters/python/README.md) |
+| Go | cgo | `go get github.com/aspect-build/zinc/adapters/go` (pending) | `adapters/go/` | [README](adapters/go/README.md) |
+| Node.js | napi-rs | `npm install @aspect-build/zinc` (pending) | `adapters/node/` | [README](adapters/node/README.md) |
+| Bun | bun:ffi | `bun add @aspect-build/zinc-bun` (pending) | `adapters/bun/` | [README](adapters/bun/README.md) |
+| Deno | Deno.dlopen | `deno add @aspect-build/zinc` (pending) | `adapters/deno/` | [README](adapters/deno/README.md) |
+| C++ | Header-only RAII | GitHub Release | `adapters/cpp/` (pending) | [README](adapters/cpp/README.md) |
+| Java | JNA | `mvn central` (pending) | `adapters/java/` (pending) | [README](adapters/java/README.md) |
+| C# | P/Invoke | `dotnet add package Zinc` | `adapters/csharp/` (pending) | [README](adapters/csharp/README.md) |
 
 ---
 
