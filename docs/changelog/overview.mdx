@@ -1,0 +1,39 @@
+---
+title: "Changelog"
+description: "Product updates and releases"
+mode: "center"
+---
+
+<Update label="Week of May 29, 2026">
+
+## New features
+
+**Java and C# adapters.** Zinc now ships official adapters for Java and C#, alongside integration tests and benchmarks. See [Java](/adapters/java) and [C#](/adapters/csharp) for setup and usage.
+
+**JavaScript, Python, Go, and C++ adapters.** First-class language bindings are now available for [Node.js](/adapters/node), [Bun](/adapters/bun), [Deno](/adapters/deno), [Python](/adapters/python), [Go](/adapters/go), and [C++](/adapters/cpp).
+
+**Stable C ABI.** A `cbindgen`-generated header is now published so any language with C FFI can integrate against Zinc. See the [C ABI reference](/reference/c-abi) and [header](/reference/header).
+
+**Per-language release workflow.** Adapters now follow an automated release pipeline with per-language READMEs, making installs and version tracking easier across ecosystems.
+
+## Updates
+
+**POSIX-only platform support.** The Windows backend has been removed. Zinc now officially targets Linux and macOS, both of which use POSIX shared memory (`shm_open` + `mmap`). See [platform notes](/platform/notes) for per-platform behavior.
+
+**Socket-specific iteration helpers.** New helpers make it easier to iterate over socket-style workloads when benchmarking or building socket-replacement adapters.
+
+**Expanded test coverage.** Adapter test suites for Python and Go have been added, and the Rust core test suite has been broadened across CI targets.
+
+**Refreshed benchmarks.** The [benchmarks page](/performance/benchmarks) now includes mmap and gRPC comparisons, plus a heap-vs-Zinc 1 GB throughput run and a Zinc-vs-Unix-socket data transfer comparison. Result tables use box-drawing characters and color for readability, with example images embedded.
+
+## Bug fixes
+
+**Linux futex stability.** Fixed an `EAGAIN` handling bug and a region wait race in the Linux futex path. Also fixed a private-flag mismatch that could occur across separately `mmap`-ed regions.
+
+**Lock-free ring pointer.** Resolved a pointer bug in the lock-free ring that could surface under concurrent producers/consumers.
+
+**Device identifier.** Corrected the device identifier reported by regions on certain hosts.
+
+**Benchmark accuracy.** Fixed a notify/wait race where the notifier thread completed too early, resolved a socket-benchmark deadlock on large payloads, and added stale shared-memory cleanup before region creation to prevent `AlreadyExists` errors. The throughput benchmark now uses a persistent writer thread for accurate notify latency and includes a 1 GB run.
+
+</Update>
