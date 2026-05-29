@@ -70,6 +70,10 @@
       {
         "tab": "Contributing",
         "pages": ["contributing"]
+      },
+      {
+        "tab": "Changelog",
+        "pages": ["changelog/overview"]
       }
     ]
   },
