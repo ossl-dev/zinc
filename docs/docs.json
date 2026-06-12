@@ -79,7 +79,7 @@
   },
   "footer": {
     "socials": {
-      "github": "https://github.com/Mohammed-Aman-Khan/zinc"
+      "github": "https://github.com/Open-Vanguard/zinc"
     }
   },
   "description": "Universal Shared Memory",
@@ -106,7 +106,7 @@
   "navbar": {
     "links": [
       {
-        "href": "https://github.com/Mohammed-Aman-Khan/zinc",
+        "href": "https://github.com/Open-Vanguard/zinc",
         "label": "GitHub"
       }
     ]
