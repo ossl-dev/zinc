@@ -8,7 +8,7 @@ The Deno adapter uses `Deno.dlopen` to load the Zinc shared library. Like the Bu
 ## Installation
 
 ```bash
-deno add @aspect-build/zinc
+deno add @ossl/zinc
 ```
 
 Requires Deno 1.33 or later with `--allow-ffi` and `--allow-read` permissions.
@@ -16,7 +16,7 @@ Requires Deno 1.33 or later with `--allow-ffi` and `--allow-read` permissions.
 ## SharedRegion
 
 ```typescript
-import { SharedRegion } from "@aspect-build/zinc";
+import { SharedRegion } from "@ossl/zinc";
 ```
 
 ### create
@@ -75,7 +75,7 @@ const buf = region.buffer();
 ## Complete example
 
 ```typescript
-import { SharedRegion } from "@aspect-build/zinc";
+import { SharedRegion } from "@ossl/zinc";
 
 // Writer
 const w = SharedRegion.create("deno-channel", 4096);

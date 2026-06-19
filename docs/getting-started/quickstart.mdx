@@ -43,7 +43,7 @@ The writer process creates a shared region, writes a float value, and notifies a
   ```
 
   ```typescript Node.js
-  import { ZincRegion } from '@aspect-build/zinc';
+  import { ZincRegion } from '@ossl/zinc';
 
   const region = ZincRegion.create("my-data", 4096);
   const buf = region.asBuffer();
@@ -63,7 +63,7 @@ The writer process creates a shared region, writes a float value, and notifies a
   ```
 
   ```typescript Deno
-  import { SharedRegion } from "@aspect-build/zinc";
+  import { SharedRegion } from "@ossl/zinc";
 
   const region = SharedRegion.create("my-data", 4096);
   const buf = region.buffer();
@@ -138,7 +138,7 @@ Run this in a separate terminal window while the writer is running.
   ```
 
   ```typescript Node.js
-  import { ZincRegion } from '@aspect-build/zinc';
+  import { ZincRegion } from '@ossl/zinc';
 
   const region = ZincRegion.open("my-data");
   const buf = region.asBuffer();
@@ -154,7 +154,7 @@ Run this in a separate terminal window while the writer is running.
   ```
 
   ```typescript Deno
-  import { SharedRegion } from "@aspect-build/zinc";
+  import { SharedRegion } from "@ossl/zinc";
 
   const region = SharedRegion.open("my-data");
   const buf = region.buffer();

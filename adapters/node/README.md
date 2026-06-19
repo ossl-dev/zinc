@@ -5,7 +5,7 @@ Zero-copy shared memory for Node.js via [napi-rs](https://napi.rs).
 ## Install
 
 ```bash
-npm install @aspect-build/zinc
+npm install @ossl/zinc
 ```
 
 Requires the Zinc core library (`libzinc_core.dylib` / `libzinc_core.so`) on your `LD_LIBRARY_PATH` or adjacent to the native addon.
@@ -22,7 +22,7 @@ npx napi build --release
 ## Usage
 
 ```typescript
-import { ZincRegion } from "@aspect-build/zinc";
+import { ZincRegion } from "@ossl/zinc";
 
 // Process A — create
 const region = ZincRegion.create("/my-data", 4096);

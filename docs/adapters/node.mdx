@@ -8,7 +8,7 @@ The Node.js adapter uses napi-rs, which compiles a Rust crate into a `.node` nat
 ## Installation
 
 ```bash
-npm install @aspect-build/zinc
+npm install @ossl/zinc
 ```
 
 Requires Node.js 18 or later. The native addon is built for your platform at install time.
@@ -16,7 +16,7 @@ Requires Node.js 18 or later. The native addon is built for your platform at ins
 ## ZincRegion
 
 ```typescript
-import { ZincRegion } from '@aspect-build/zinc';
+import { ZincRegion } from '@ossl/zinc';
 ```
 
 ### create
@@ -64,7 +64,7 @@ Returns `true` if data was available, `false` on timeout.
 ## Complete example
 
 ```typescript
-import { ZincRegion } from '@aspect-build/zinc';
+import { ZincRegion } from '@ossl/zinc';
 
 // Writer
 const writer = ZincRegion.create("channel", 4096);

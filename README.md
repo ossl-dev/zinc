@@ -21,7 +21,7 @@ Zinc maps the same physical RAM pages into both processes via POSIX shared memor
 ## Quick start
 
 ```bash
-git clone https://github.com/aspect-build/zinc
+git clone https://github.com/ossl-dev/zinc
 cd zinc
 cargo build --release --manifest-path core/Cargo.toml
 ```
@@ -122,10 +122,10 @@ Target: notify/wait roundtrip < 5µs on Linux.
 |---|---|---|---|---|
 | Rust | Direct crate | `crates.io` (pending) | `core/` | — |
 | Python | cffi + numpy | `pip install zinc-shm` (pending) | `adapters/python/` | [README](adapters/python/README.md) |
-| Go | cgo | `go get github.com/aspect-build/zinc/adapters/go` (pending) | `adapters/go/` | [README](adapters/go/README.md) |
-| Node.js | napi-rs | `npm install @aspect-build/zinc` (pending) | `adapters/node/` | [README](adapters/node/README.md) |
-| Bun | bun:ffi | `bun add @aspect-build/zinc-bun` (pending) | `adapters/bun/` | [README](adapters/bun/README.md) |
-| Deno | Deno.dlopen | `deno add @aspect-build/zinc` (pending) | `adapters/deno/` | [README](adapters/deno/README.md) |
+| Go | cgo | `go get github.com/ossl/zinc/adapters/go` (pending) | `adapters/go/` | [README](adapters/go/README.md) |
+| Node.js | napi-rs | `npm install @ossl/zinc` (pending) | `adapters/node/` | [README](adapters/node/README.md) |
+| Bun | bun:ffi | `bun add @ossl/zinc-bun` (pending) | `adapters/bun/` | [README](adapters/bun/README.md) |
+| Deno | Deno.dlopen | `deno add @ossl/zinc` (pending) | `adapters/deno/` | [README](adapters/deno/README.md) |
 | C++ | Header-only RAII | GitHub Release | `adapters/cpp/` (pending) | [README](adapters/cpp/README.md) |
 | Java | JNA | `mvn central` (pending) | `adapters/java/` (pending) | [README](adapters/java/README.md) |
 | C# | P/Invoke | `dotnet add package Zinc` | `adapters/csharp/` (pending) | [README](adapters/csharp/README.md) |

@@ -5,7 +5,7 @@ Zero-copy shared memory for Go via [cgo](https://pkg.go.dev/cmd/cgo).
 ## Install
 
 ```bash
-go get github.com/aspect-build/zinc/adapters/go
+go get github.com/ossl/zinc/adapters/go
 ```
 
 Requires `libzinc_core.dylib` / `libzinc_core.so` built and findable in `LD_LIBRARY_PATH` / `DYLD_LIBRARY_PATH`.
@@ -25,7 +25,7 @@ package main
 import (
     "fmt"
     "unsafe"
-    "github.com/aspect-build/zinc/adapters/go"
+    "github.com/ossl/zinc/adapters/go"
 )
 
 func main() {

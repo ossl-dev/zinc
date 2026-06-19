@@ -18,7 +18,7 @@ Zinc ships as a shared library (`libzinc_core`) with per-language adapter packag
 The core library is a Rust crate at the `core/` directory. It compiles to a `cdylib` that every language adapter loads at runtime.
 
 ```bash
-git clone https://github.com/aspect-build/zinc
+git clone https://github.com/ossl-dev/zinc
 cd zinc
 cargo build --release --manifest-path core/Cargo.toml
 ```
@@ -50,22 +50,22 @@ The build also generates `include/zinc.h` via cbindgen. This header is the C ABI
   ```
 
   ```bash Go
-  go get github.com/aspect-build/zinc/adapters/go
+  go get github.com/ossl/zinc/adapters/go
 
   # Or use a local path
   # In go.mod: replace zinc => ./adapters/go
   ```
 
   ```bash Node.js
-  npm install @aspect-build/zinc
+  npm install @ossl/zinc
   ```
 
   ```bash Bun
-  bun add @aspect-build/zinc-bun
+  bun add @ossl/zinc-bun
   ```
 
   ```bash Deno
-  deno add @aspect-build/zinc
+  deno add @ossl/zinc
   ```
 
   ```bash C++

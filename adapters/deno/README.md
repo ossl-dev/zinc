@@ -7,7 +7,7 @@ Zero-copy shared memory for Deno via `Deno.dlopen`.
 ### JSR
 
 ```bash
-deno add @aspect-build/zinc
+deno add @ossl/zinc
 ```
 
 ### Direct import
@@ -27,7 +27,7 @@ cargo build --release --manifest-path core/Cargo.toml
 ## Usage
 
 ```typescript
-import { SharedRegion } from "@aspect-build/zinc";
+import { SharedRegion } from "@ossl/zinc";
 
 // Process A — create
 const region = SharedRegion.create("/my-data", 4096);

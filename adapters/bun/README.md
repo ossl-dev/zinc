@@ -5,9 +5,9 @@ Zero-copy shared memory for Bun via `bun:ffi`.
 ## Install
 
 ```bash
-npm install @aspect-build/zinc-bun
+npm install @ossl/zinc-bun
 # or
-bun add @aspect-build/zinc-bun
+bun add @ossl/zinc-bun
 ```
 
 Requires `libzinc_core.dylib` (macOS) or `libzinc_core.so` (Linux) built and accessible.
@@ -22,7 +22,7 @@ cargo build --release --manifest-path core/Cargo.toml
 ## Usage
 
 ```typescript
-import { SharedRegion } from "@aspect-build/zinc-bun";
+import { SharedRegion } from "@ossl/zinc-bun";
 
 // Process A — create
 const region = SharedRegion.create("/my-data", 4096);

@@ -8,7 +8,7 @@
 
 #define MAGIC 6505817187982394695
 
-#define VERSION 1
+#define VERSION 2
 
 typedef void *ZincHandle;
 
