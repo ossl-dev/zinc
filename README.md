@@ -2,6 +2,18 @@
 
 # Zinc - Universal Shared Memory Library
 
+[![CI](https://github.com/Open-Vanguard/zinc/actions/workflows/ci.yml/badge.svg)](https://github.com/Open-Vanguard/zinc/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/core-Rust-orange)](core/)
+[![Python](https://img.shields.io/badge/adapter-Python-3776AB)](adapters/python/)
+[![Go](https://img.shields.io/badge/adapter-Go-00ADD8)](adapters/go/)
+[![Node.js](https://img.shields.io/badge/adapter-Node.js-339933)](adapters/node/)
+[![Bun](https://img.shields.io/badge/adapter-Bun-FBF0DF)](adapters/bun/)
+[![Deno](https://img.shields.io/badge/adapter-Deno-000000)](adapters/deno/)
+[![C++](https://img.shields.io/badge/adapter-C++-00599C)](adapters/cpp/)
+[![Java](https://img.shields.io/badge/adapter-Java-ED8B00)](adapters/java/)
+[![C#](https://img.shields.io/badge/adapter-C%23-512BD4)](adapters/csharp/)
+
 Zinc gives processes in **any language** direct access to the same physical memory — across Rust, Python, Go, Node.js, Bun, Deno, C++, Java, C#, and more. No serialization, no copies, no kernel round-trips. Just `mmap` under the hood and a zero-copy view of the same bytes in every language.
 
 **Windows is not supported.** Zinc is a Linux/macOS library built on POSIX shared memory (`shm_open` + `mmap`).
@@ -118,17 +130,18 @@ Target: notify/wait roundtrip < 5µs on Linux.
 
 ## Language adapters
 
-| Language | Mechanism | Package | Path | README |
+| Language | Mechanism | Status | Path | README |
 |---|---|---|---|---|
-| Rust | Direct crate | `crates.io` (pending) | `core/` | — |
-| Python | cffi + numpy | `pip install zinc-shm` (pending) | `adapters/python/` | [README](adapters/python/README.md) |
-| Go | cgo | `go get github.com/ossl/zinc/adapters/go` (pending) | `adapters/go/` | [README](adapters/go/README.md) |
-| Node.js | napi-rs | `npm install @ossl/zinc` (pending) | `adapters/node/` | [README](adapters/node/README.md) |
-| Bun | bun:ffi | `bun add @ossl/zinc-bun` (pending) | `adapters/bun/` | [README](adapters/bun/README.md) |
-| Deno | Deno.dlopen | `deno add @ossl/zinc` (pending) | `adapters/deno/` | [README](adapters/deno/README.md) |
-| C++ | Header-only RAII | GitHub Release | `adapters/cpp/` (pending) | [README](adapters/cpp/README.md) |
-| Java | JNA | `mvn central` (pending) | `adapters/java/` (pending) | [README](adapters/java/README.md) |
-| C# | P/Invoke | `dotnet add package Zinc` | `adapters/csharp/` (pending) | [README](adapters/csharp/README.md) |
+| Rust | Direct crate | Core ready | `core/` | — |
+| Python | cffi + numpy | Tests passing | `adapters/python/` | [README](adapters/python/README.md) |
+| Go | cgo | Tests passing | `adapters/go/` | [README](adapters/go/README.md) |
+| Node.js | napi-rs | Builds | `adapters/node/` | [README](adapters/node/README.md) |
+| Bun | bun:ffi | Tests passing | `adapters/bun/` | [README](adapters/bun/README.md) |
+| Deno | Deno.dlopen | Tests passing | `adapters/deno/` | [README](adapters/deno/README.md) |
+| C++ | Header-only RAII | CMake ready | `adapters/cpp/` | [README](adapters/cpp/README.md) |
+| Java | JNA | Tests added | `adapters/java/` | [README](adapters/java/README.md) |
+| C# | P/Invoke | Tests added | `adapters/csharp/` | [README](adapters/csharp/README.md) |
+
 
 ---
 

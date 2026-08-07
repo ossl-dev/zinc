@@ -31,7 +31,9 @@
             "pages": [
               "guides/writing-data",
               "guides/notify-wait",
-              "guides/lifecycle"
+              "guides/lifecycle",
+              "guides/troubleshooting",
+              "guides/migrating-from-v1"
             ]
           },
           {

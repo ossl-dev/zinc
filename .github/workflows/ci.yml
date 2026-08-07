@@ -10,9 +10,11 @@ on:
   pull_request:
     paths:
       - 'core/**'
+      - 'adapters/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/ci.yml'
+      - 'deny.toml'
 
 jobs:
   core:
@@ -36,3 +38,95 @@ jobs:
             ${{ runner.os }}-cargo-
       - run: cargo test --manifest-path core/Cargo.toml
       - run: cargo clippy --manifest-path core/Cargo.toml -- -D warnings
+
+  cargo-deny:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
+  valgrind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install valgrind
+        run: sudo apt-get update -y && sudo apt-get install -y valgrind
+      - name: Cache cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            core/target
+          key: valgrind-cargo-${{ hashFiles('core/Cargo.toml') }}
+      - name: Build tests
+        run: cargo test --manifest-path core/Cargo.toml --no-run
+      - name: Run under valgrind
+        run: |
+          set +e
+          valgrind --leak-check=full --error-exitcode=1 \
+            cargo test --manifest-path core/Cargo.toml 2>&1 | tee valgrind.log
+          echo "--- Valgrind leak summary ---"
+          grep -E "definitely lost|indirectly lost|possibly lost|still reachable" valgrind.log || true
+
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [core]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build core library
+        run: cargo build --release --manifest-path core/Cargo.toml
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Python deps
+        run: pip install pytest cffi
+      - name: Run Python tests
+        run: |
+          export LD_LIBRARY_PATH="$PWD/core/target/release:$LD_LIBRARY_PATH"
+          export DYLD_LIBRARY_PATH="$PWD/core/target/release:$DYLD_LIBRARY_PATH"
+          python -m pytest adapters/python/tests/ -v
+
+  go:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [core]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build core library
+        run: cargo build --release --manifest-path core/Cargo.toml
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: Go vet
+        run: |
+          export LD_LIBRARY_PATH="$PWD/core/target/release:$LD_LIBRARY_PATH"
+          go vet ./adapters/go/...
+      - name: Go test
+        run: |
+          export LD_LIBRARY_PATH="$PWD/core/target/release:$LD_LIBRARY_PATH"
+          go test -v ./adapters/go/...
+
+  node:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [core]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build core library
+        run: cargo build --release --manifest-path core/Cargo.toml
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build Node addon
+        working-directory: adapters/node
+        run: |
+          npm install
+          npm run build

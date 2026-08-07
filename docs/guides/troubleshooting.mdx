@@ -1,0 +1,244 @@
+---
+title: "Troubleshooting"
+description: "Common errors and how to fix them"
+---
+
+This page covers errors you're likely to hit and how to resolve them.
+
+## Shared memory errors
+
+### `zinc_create` fails with `AlreadyExists` (-17)
+
+A region with that name already exists in `/dev/shm/`. Either:
+
+1. An earlier process crashed without cleaning up.
+2. Another process is actively using the region.
+
+**Fix on Linux:**
+
+```bash
+# List active regions
+ls -la /dev/shm/zinc_*
+
+# Force remove a stale region
+rm /dev/shm/zinc_my-data
+```
+
+**Fix on macOS:** The shared memory object is kernel-managed and can't be removed from the filesystem. Restart your processes, or use a unique name per run (append a PID or timestamp).
+
+### `zinc_create` fails with `InvalidSize` (-22)
+
+Capacity must be a positive multiple of the system page size (typically 4096 bytes). The error includes the required page size.
+
+```rust
+// Wrong
+region = SharedRegion.create("data", 1000)
+
+// Right
+region = SharedRegion.create("data", 4096)
+```
+
+### `zinc_open` fails with `NotFound` (-2)
+
+No region with that name exists. The creating process may have already closed and unlinked it, or it hasn't been created yet. Ensure the creator is running and using the same name. Region names are case-sensitive.
+
+### `PermissionDenied` (-1)
+
+On Linux, shared memory objects are created with mode `0600` (owner read/write). If another user created the region, your process can't open it. All processes sharing a region must run as the same user.
+
+## Library not found errors
+
+### Python: `OSError: cannot load library`
+
+```
+OSError: cannot load library 'libzinc_core.so': libzinc_core.so: cannot open shared object file
+```
+
+**Fix:** Build the core library first and set the library path:
+
+```bash
+cargo build --release --manifest-path core/Cargo.toml
+export LD_LIBRARY_PATH="$(pwd)/core/target/release:$LD_LIBRARY_PATH"   # Linux
+export DYLD_LIBRARY_PATH="$(pwd)/core/target/release:$DYLD_LIBRARY_PATH" # macOS
+```
+
+### Node: `npm run build` fails
+
+The Node adapter uses [napi-rs](https://napi.rs/). If `npm run build` fails with missing symbols:
+
+```bash
+cd adapters/node
+npm install
+npm run build
+```
+
+The build links against the Cargo workspace in `../../core`, so you need the full repo checked out.
+
+### Go: `cgo` linker errors
+
+```
+# zinc
+/usr/bin/ld: cannot find -lzinc_core
+```
+
+**Fix:** Point the linker at the built core library:
+
+```bash
+export CGO_LDFLAGS="-L$(pwd)/core/target/release"
+export LD_LIBRARY_PATH="$(pwd)/core/target/release:$LD_LIBRARY_PATH"
+go test ./adapters/go/...
+```
+
+### Java: `UnsatisfiedLinkError`
+
+```
+java.lang.UnsatisfiedLinkError: Unable to load library 'zinc_core'
+```
+
+JNA looks for `libzinc_core.so` on `java.library.path`. Set it:
+
+```bash
+java -Djna.library.path=core/target/release -cp target/test-classes:target/classes ...
+```
+
+### C#: `DllNotFoundException`
+
+```
+System.DllNotFoundException: Unable to load shared library 'zinc_core'
+```
+
+Copy `libzinc_core.so` / `libzinc_core.dylib` to the working directory or set `LD_LIBRARY_PATH` / `DYLD_LIBRARY_PATH` before running `.NET` tests.
+
+### Bun: `dlopen` fails
+
+Bun's `bun:ffi` looks for the library at a path relative to the source file. By default it expects:
+
+```
+core/target/release/libzinc_core.{so,dylib}
+```
+
+Build the core first:
+
+```bash
+cargo build --release --manifest-path core/Cargo.toml
+```
+
+### Deno: `--allow-ffi` required
+
+Deno's FFI requires the `--allow-ffi` permission:
+
+```bash
+deno test --allow-ffi adapters/deno/tests/
+```
+
+## macOS-specific issues
+
+### Wait burns CPU
+
+On macOS, `wait()` uses an adaptive spin loop because `futex` doesn't exist. A waiting thread will consume CPU for the duration of the wait. This is by design.
+
+**Mitigations:**
+- Keep timeouts short (< 100ms).
+- Use `notify()` + manual polling for very long waits.
+- Consider using a `dispatch_semaphore` in shared memory on top of a Zinc region if you need efficient sleeping waits on macOS.
+
+### Region names not visible in filesystem
+
+Unlike Linux, macOS shared memory objects don't appear as files. `ls /dev/shm/` won't work. Use a coordination mechanism (file lock, socket, env var) to tell processes which names to use.
+
+### `shm_open` fails with ENOMEM
+
+macOS has a very low default limit for shared memory. Check:
+
+```bash
+sysctl kern.sysv.shmmax
+```
+
+If too low, increase it:
+
+```bash
+sudo sysctl -w kern.sysv.shmmax=268435456  # 256MB
+```
+
+## Linux-specific issues
+
+### `/dev/shm` permissions
+
+Some container runtimes mount `/dev/shm` with restricted permissions:
+
+```bash
+ls -la /dev/shm
+# drwxrwxrwt 2 root root 40 ...
+```
+
+If you see `PermissionDenied`, ensure the mount has the sticky bit (`t`) set and is world-writable. In Docker, add:
+
+```bash
+docker run --shm-size=256m ...
+```
+
+### Too many regions (`ENFILE` / `EMFILE`)
+
+Each open region holds a file descriptor. The default per-process limit is typically 1024. Raise it:
+
+```bash
+ulimit -n 4096
+```
+
+### `vm.max_map_count` exhaustion
+
+Each `mmap` call creates a mapping entry in the kernel's VMA tree. If you open many regions, you may hit the limit:
+
+```bash
+# View current limit
+sysctl vm.max_map_count
+
+# Raise it
+sudo sysctl -w vm.max_map_count=262144
+```
+
+Typical default is 65530, which should be enough for most use cases.
+
+## General debugging
+
+### Enable verbose errors
+
+The core library returns error codes as negative `errno` values. Most adapter wrappers try to map these to readable messages. If you get a cryptic numeric error, look it up:
+
+```bash
+# Linux
+errno -l | grep <absolute value>
+
+# macOS
+man errno | grep <number>
+```
+
+### Check for zombie regions
+
+Regions persist in `/dev/shm/` if the creator crashes without unlinking. To find them:
+
+```bash
+ls -la /dev/shm/zinc_*
+```
+
+The filename includes the region name. If no process is using a region (check with `fuser` or `lsof`), you can safely remove the file.
+
+### Verify the core library is compatible
+
+```bash
+# The zinc_version() function returns (major << 16) | minor
+# C ABI check:
+echo 'int zinc_version(); int main() { return zinc_version(); }' | cc -x c - -Lcore/target/release -lzinc_core
+```
+
+Keep the header (`include/zinc.h`) and the library in sync — they're built together.
+
+## File descriptor usage
+
+| Operation | FDs consumed | Released by |
+|-----------|-------------|-------------|
+| `zinc_create` | 2 (shm fd + mmap) | `zinc_close` |
+| `zinc_open` | 2 (shm fd + mmap) | `zinc_close` |
+| `zinc_close` | -2 (closes both) | (immediate) |
+
+Each `zinc_create` or `zinc_open` holds one file descriptor from `shm_open` and one anonymous descriptor from `mmap`. Both are released on `zinc_close`. If your process opens many regions, mind the per-process FD limit.

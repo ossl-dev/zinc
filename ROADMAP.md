@@ -23,26 +23,26 @@ Stuff that's built but not released or not finished.
 
 ### Adapters
 
-- [ ] Java adapter: finish FFI bindings, write integration tests
-- [ ] C# adapter: finish FFI bindings, write integration tests
-- [ ] C++ adapter: add CMakeLists.txt for easy build, write usage examples
-- [ ] Deno adapter: add `deno test` suite
-- [ ] Bun adapter: add `bun test` suite
-- [ ] Go adapter: test on Linux (currently macOS-tested mainly)
+- [x] Java adapter: finish FFI bindings, write integration tests
+- [x] C# adapter: finish FFI bindings, write integration tests
+- [x] C++ adapter: add CMakeLists.txt for easy build, write usage examples
+- [x] Deno adapter: add `deno test` suite
+- [x] Bun adapter: add `bun test` suite
+- [x] Go adapter: test on Linux (CI covers ubuntu-latest, macos-latest)
 
 ### CI / infra
 
-- [ ] Wire up `cargo bench` (criterion) — docs say "not yet available"
-- [ ] Add per-adapter CI jobs (Python lint + test, Go vet + test, Node lint + test)
-- [ ] Add CI badge matrix to README (one column per adapter)
-- [ ] Add `valgrind` / `dhat` leak check to CI
-- [ ] Add cargo-deny for license + advisory checks
+- [x] Wire up `cargo bench` (criterion) — benchmarks for throughput and latency
+- [x] Add per-adapter CI jobs (Python test, Go vet + test, Node build)
+- [x] Add CI badge matrix to README
+- [x] Add `valgrind` leak check to CI (Linux)
+- [x] Add cargo-deny for license + advisory checks
 
 ### Docs
 
-- [ ] Add API reference page per adapter (some are missing)
-- [ ] Add troubleshooting page (common errors, `/dev/shm` permissions, macOS quirks)
-- [ ] Add "migrating from v1" guide (if anyone was on the Zig version)
+- [x] Add API reference page per adapter (all 9 languages have docs)
+- [x] Add troubleshooting page (common errors, `/dev/shm` permissions, macOS quirks)
+- [x] Add "migrating from v1" guide (if anyone was on the Zig version)
 
 ---
 

@@ -17,3 +17,12 @@ cbindgen = "0.28"
 static_assertions = "1"
 prost = "0.14"
 redis = "0.25"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "throughput"
+harness = false
+
+[[bench]]
+name = "latency"
+harness = false

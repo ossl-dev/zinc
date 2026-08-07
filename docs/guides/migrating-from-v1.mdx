@@ -1,0 +1,131 @@
+---
+title: "Migrating from v1"
+description: "Moving from the Zig-based Zinc v1 to the Rust-based v2"
+---
+
+Zinc v2 is a complete rewrite. If you used the Zig-based v1, this page covers what changed and how to migrate.
+
+## What changed
+
+| v1 | v2 |
+|---|---|
+| Zig core | Rust core (`zinc-core`) |
+| Ring buffer as transport | Raw `mmap` region — you control the data layout |
+| 4KB slot limit in ring | No limit beyond region capacity |
+| Zig FFI per language | C ABI (8 functions) — one `libzinc_core.so` for all languages |
+| Serialize → memcpy → memcpy → deserialize | Zero copies — write structs directly into shared memory |
+| macOS: corrupt sender PID | macOS: fixed across the board |
+| Node: 4KB `Vec` leak per `poll()` tick | Node: napi-rs addon, no polling, zero leaks |
+| JavaScript: `setInterval` polling (~1ms floor) | All languages: real notify/wait via futex or adaptive spin |
+
+## Why v2 is not backward-compatible
+
+v1's ring buffer abstraction was the wrong level. The ring had a 4KB slot limit, forced serialization, and couldn't support streaming or variable-length data. The data path was:
+
+```
+object → binary encode → memcpy into ring → memcpy out of ring → decode → new object
+```
+
+v2 removes the ring. Instead, you get a raw pointer to shared memory. Layout bytes however you want. `notify()` and `wait()` are still there for synchronization.
+
+## Conceptual migration
+
+### v1 pattern: push/pop through ring
+
+```typescript
+// v1 — Bun
+const ring = new Ring("my-ring");
+ring.push(Buffer.from("hello"));
+const msg = ring.poll(); // polling at setInterval rate
+```
+
+### v2 pattern: write/read directly, notify on update
+
+```typescript
+// v2 — Bun
+const region = SharedRegion.create("my-data", 4096);
+const buf = region.buffer();
+new TextEncoder().encodeInto("hello", buf);
+region.notify(); // real kernel-assisted wake on Linux
+
+// Reader
+const r = SharedRegion.open("my-data");
+r.wait(5000);       // blocks until notified
+const text = new TextDecoder().decode(r.buffer().slice(0, 5));
+```
+
+## Language-specific migration
+
+### Bun / Deno
+
+v1 used Zig-compiled `.so`/`.dylib` per platform. v2 uses a single Rust-compiled `libzinc_core.{so,dylib}`.
+
+```diff
+- import { Ring } from "./ring";
++ import { SharedRegion } from "zinc-bun";
+
+- const ring = new Ring("my-channel");
+- ring.push(data);
+- const out = ring.poll();
++ const region = SharedRegion.create("my-channel", 4096);
++ region.buffer().set(data);
++ region.notify();
++ // Reader side:
++ const r = SharedRegion.open("my-channel");
++ r.wait(5000);
++ const out = r.buffer().slice(0, data.length);
+```
+
+### Node.js
+
+v1 used Zig FFI via `ffi-napi`. v2 uses [napi-rs](https://napi.rs/) for a compiled native `.node` addon — no FFI overhead.
+
+```diff
+- const ringBinding = require('./zig/ring.node');
++ import { ZincRegion } from '@ossl/zinc';
+
+- const handle = ringBinding.create("my-channel");
+- ringBinding.write(handle, buffer);
++ const region = ZincRegion.create("my-channel", 4096);
++ region.asBuffer().set(buffer);
++ region.notify();
+```
+
+### Python
+
+v1 called the Zig library through `ctypes`. v2 uses `cffi` (faster FFI) with numpy zero-copy support built-in.
+
+```diff
+- import ctypes
+- lib = ctypes.CDLL("./libring.so")
+- lib.ring_create.restype = ctypes.c_void_p
+- handle = lib.ring_create(b"my-channel")
++ from zinc import SharedRegion
++ region = SharedRegion.create("my-channel", 4096)
++ arr = region.as_numpy(dtype=np.float32)
++ arr[0] = 42.0  # zero-copy write
+```
+
+## What v1 didn't have that v2 adds
+
+- **Cross-language zero-copy.** Python numpy, Go slice, C++ span, Java ByteBuffer, C# Span — all backed by the same physical pages.
+- **Type-safe refcounting.** Atomic refcount in the header prevents use-after-unlink.
+- **Notification ring.** v2 has an internal 256-slot MPSC notification ring, so multiple notifies between waits aren't lost.
+- **Error codes.** The C ABI returns standard `errno` values (`EEXIST`, `ENOENT`, `EINVAL`, `ETIMEDOUT`).
+- **Version check.** `zinc_version()` returns `(major << 16) | minor` for compatibility checks.
+
+## Still the same
+
+- **`shm_open` + `mmap`** is the core mechanism. Same POSIX backing.
+- **`notify` / `wait`** pattern. Same mental model.
+- **POSIX-only.** Windows is still not supported.
+- **MIT licensed.** Same license.
+
+## Migration checklist
+
+- [ ] Replace any `ring.push()` / `ring.poll()` calls with region write + notify/wait
+- [ ] Pick a data layout for your shared region (flat struct, offset table, protobuf, cap'n proto — your choice)
+- [ ] Add a `notify()` after writes, add a `wait()` before reads
+- [ ] Handle `Timeout` from `wait()` — v2 times out cleanly, v1's polling would just return empty
+- [ ] If using polling, replace `setInterval` with `wait()` calls in a dedicated thread/worker
+- [ ] Drop the Zig runtime dependency — v2 only needs `libzinc_core` from the Rust build
