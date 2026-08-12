@@ -12,7 +12,7 @@ The header of every shared region contains a `notify_seq` field: an atomic 32-bi
 1. The writer calls `notify()`, which atomically increments `notify_seq` and wakes any waiting threads.
 2. The reader calls `wait()`, which blocks until `notify_seq` changes from the value it last observed.
 
-This design avoids a common race condition. If the writer increments the sequence number before the reader starts waiting, and the reader waits for the _current_ value, it blocks forever — the counter already changed. Zinc's `wait()` tracks a per-handle `last_seq` value instead. It waits for the counter to change _from the last value it saw_, not from whatever it currently reads.
+This design avoids a common race condition. If the writer increments the sequence number before the reader starts waiting, and the reader waits for the _current_ value, it blocks forever, the counter already changed. Zinc's `wait()` tracks a per-handle `last_seq` value instead. It waits for the counter to change _from the last value it saw_, not from whatever it currently reads.
 
 On Linux, `wait()` uses the `futex` syscall. It parks the calling thread in the kernel until the futex address changes or the timeout expires. Zero overhead with no waiters: `notify()` still does an atomic increment and a `FUTEX_WAKE`, but with no waiters the wake is a no-op.
 

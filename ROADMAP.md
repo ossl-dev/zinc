@@ -6,7 +6,7 @@ Anyone looking to contribute: pick an unchecked box, open an issue saying you're
 
 ---
 
-## Phase 1 — Ship what we have
+## Phase 1, Ship what we have
 
 Stuff that's built but not released or not finished.
 
@@ -32,7 +32,7 @@ Stuff that's built but not released or not finished.
 
 ### CI / infra
 
-- [x] Wire up `cargo bench` (criterion) — benchmarks for throughput and latency
+- [x] Wire up `cargo bench` (criterion), benchmarks for throughput and latency
 - [x] Add per-adapter CI jobs (Python test, Go vet + test, Node build)
 - [x] Add CI badge matrix to README
 - [x] Add `valgrind` leak check to CI (Linux)
@@ -46,20 +46,20 @@ Stuff that's built but not released or not finished.
 
 ---
 
-## Phase 2 — Core improvements
+## Phase 2, Core improvements
 
 Stuff that makes the existing thing better, faster, safer.
 
 ### Synchronization
 
 - [ ] Replace macOS spin-wait with `__ulock_wait` / `__ulock_wake` (private API, needs detection + graceful fallback)
-- [ ] Add `try_wait()` — non-blocking check on notify_seq
+- [ ] Add `try_wait()`, non-blocking check on notify_seq
 - [ ] Support waiting on multiple regions (`wait_any` / `wait_all`)
 - [ ] Linux: switch to `FUTEX_WAIT_BITSET` for multi-region wake targeting
 
 ### Memory model
 
-- [ ] Add `SharedRegion::resize()` — grow/shrink a region (needs ftruncate + remap)
+- [ ] Add `SharedRegion::resize()`, grow/shrink a region (needs ftruncate + remap)
 - [ ] Add `MAP_HUGETLB` support (huge pages for large regions, gated behind feature flag)
 - [ ] Add `MAP_POPULATE` option to pre-fault pages on create (avoid page-fault latency in hot path)
 - [ ] Expose `mlock` / `munlock` to prevent paging for latency-sensitive workloads
@@ -88,45 +88,45 @@ Stuff that makes the existing thing better, faster, safer.
 
 ---
 
-## Phase 3 — New features
+## Phase 3, New features
 
 New capabilities that expand what Zinc can do.
 
 ### Higher-level data structures
 
-- [ ] **SharedRing** — a proper byte-stream ring buffer on top of a SharedRegion. Multiple producers push bytes, consumers drain them. Replacement for the old v1 ring.
-- [ ] **SharedQueue** — typed fixed-capacity queue. Push struct T, pop struct T. Uses the lock-free ring underneath.
-- [ ] **SharedMap** — key-value store in shared memory. Think a `HashMap<K, V>` that lives in the region. Needs a concurrent hash table design.
-- [ ] **SharedArena** — bump allocator in shared memory. Allocate fixed-size slots, free in bulk.
+- [ ] **SharedRing**, a proper byte-stream ring buffer on top of a SharedRegion. Multiple producers push bytes, consumers drain them. Replacement for the old v1 ring.
+- [ ] **SharedQueue**, typed fixed-capacity queue. Push struct T, pop struct T. Uses the lock-free ring underneath.
+- [ ] **SharedMap**, key-value store in shared memory. Think a `HashMap<K, V>` that lives in the region. Needs a concurrent hash table design.
+- [ ] **SharedArena**, bump allocator in shared memory. Allocate fixed-size slots, free in bulk.
 
 ### Streaming
 
 - [ ] Add `SharedRegion::write_at(offset, data)` and `read_at(offset, buf)` with bounds checks
-- [ ] Add `SharedRegion::write_bytes(offset, val, count)` — like `memset` on the region
+- [ ] Add `SharedRegion::write_bytes(offset, val, count)`, like `memset` on the region
 - [ ] Add `SharedRegion::compare_and_swap(offset, old, new)` for lock-free data structures in shared memory
 
 ### Security
 
-- [ ] **PID allowlisting** — restrict which PIDs can open a region (stored in header, checked on open)
-- [ ] **CRC32 integrity** — optional checksum over data area, verified on open
-- [ ] **Access modes** — read-only open (MAP_PRIVATE or PROT_READ), read-write open
-- [ ] **Region ownership token** — shared secret for openers to prove they're allowed
+- [ ] **PID allowlisting**, restrict which PIDs can open a region (stored in header, checked on open)
+- [ ] **CRC32 integrity**, optional checksum over data area, verified on open
+- [ ] **Access modes**, read-only open (MAP_PRIVATE or PROT_READ), read-write open
+- [ ] **Region ownership token**, shared secret for openers to prove they're allowed
 
 ### IPC patterns
 
-- [ ] **PubSub** — one writer, many readers. Writer notifies, all readers wake.
-- [ ] **Request-Reply** — two regions paired: one for request, one for reply. Higher-level wrapper over notify/wait.
-- [ ] **Broadcast** — writer writes once, notifies all readers. Compare to Unix domain socket broadcast.
+- [ ] **PubSub**, one writer, many readers. Writer notifies, all readers wake.
+- [ ] **Request-Reply**, two regions paired: one for request, one for reply. Higher-level wrapper over notify/wait.
+- [ ] **Broadcast**, writer writes once, notifies all readers. Compare to Unix domain socket broadcast.
 
 ### Tooling
 
-- [ ] `zinc-cli` — a small CLI tool: `zinc list` (show active regions), `zinc inspect <name>` (dump header), `zinc rm <name>` (force-unlink stale regions)
-- [ ] `zinc-top` — TUI that shows active regions, ref counts, sizes, PIDs (like `htop` for shared memory)
-- [ ] `/dev/shm` monitoring hook — optional background thread that scans for stale zinc regions and cleans them up
+- [ ] `zinc-cli`, a small CLI tool: `zinc list` (show active regions), `zinc inspect <name>` (dump header), `zinc rm <name>` (force-unlink stale regions)
+- [ ] `zinc-top`, TUI that shows active regions, ref counts, sizes, PIDs (like `htop` for shared memory)
+- [ ] `/dev/shm` monitoring hook, optional background thread that scans for stale zinc regions and cleans them up
 
 ---
 
-## Phase 4 — Language adapter improvements
+## Phase 4, Language adapter improvements
 
 Each adapter should feel native, not like an FFI wrapper.
 
@@ -164,7 +164,7 @@ Each adapter should feel native, not like an FFI wrapper.
 
 ---
 
-## Phase 5 — Ecosystem & observability
+## Phase 5, Ecosystem & observability
 
 ### Benchmarks
 
@@ -193,15 +193,15 @@ Each adapter should feel native, not like an FFI wrapper.
 
 Not yet triaged into phases. Fix anytime.
 
-- [ ] macOS: `spin_loop` wait burns CPU — need real kernel wait primitive
+- [ ] macOS: `spin_loop` wait burns CPU, need real kernel wait primitive
 - [ ] Crash recovery: zombie regions if creator dies without closing (need staleness detection)
 - [ ] `AlreadyExists` on stale regions: creator crashed, old name still in `/dev/shm`, new create fails. Need `create_or_replace` mode.
-- [ ] Name length limit not documented or enforced — POSIX `shm_open` names have system-dependent limits (usually 255 chars)
+- [ ] Name length limit not documented or enforced, POSIX `shm_open` names have system-dependent limits (usually 255 chars)
 - [ ] 32-bit overflow in `zinc_version()`: major version in upper 16 bits of u32 is fine for now, but worth noting
-- [ ] Node adapter: `asBuffer` lifetime — if region closes, buffer is dangling. Need guard/handle pattern.
+- [ ] Node adapter: `asBuffer` lifetime, if region closes, buffer is dangling. Need guard/handle pattern.
 - [ ] Thread safety of `RegionHeader` fields: some are `AtomicU32`, some are plain `u64`. `created_at` read is not atomic.
-- [ ] `fnv1a` hash collision risk for name dedup — fine for now, document the tradeoff
-- [ ] No `O_SYNC` or `msync` call — data durability guarantee is unclear. Document or add `flush()` method.
+- [ ] `fnv1a` hash collision risk for name dedup, fine for now, document the tradeoff
+- [ ] No `O_SYNC` or `msync` call, data durability guarantee is unclear. Document or add `flush()` method.
 
 ---
 

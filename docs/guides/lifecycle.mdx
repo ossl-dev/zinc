@@ -69,7 +69,7 @@ If the closing handle is the owner handle (created, not opened) AND the referenc
 
 **Normal cleanup.** The creator opens the region, does work, and exits. Before exit, it ensures all openers have closed their handles. When the creator's handle is dropped, the region is unlinked. The memory is freed when the last process exits.
 
-**Graceful shutdown with long-lived openers.** The creator needs to shut down while openers are still running. Notify them first — for example, by writing a shutdown flag in shared memory — then close the handle. The region is not unlinked because openers still hold references. When openers finish and close their handles, a stale shared memory object may remain. Clean it up by calling `shm_unlink` on the name (via the platform API), then create a fresh region.
+**Graceful shutdown with long-lived openers.** The creator needs to shut down while openers are still running. Notify them first, for example, by writing a shutdown flag in shared memory, then close the handle. The region is not unlinked because openers still hold references. When openers finish and close their handles, a stale shared memory object may remain. Clean it up by calling `shm_unlink` on the name (via the platform API), then create a fresh region.
 
 **Crash recovery.** If the creator process crashes without closing its handle, the reference count is NOT decremented automatically. But the creator is gone, so nobody can decrement it. If only the creator's reference remains, the region becomes a zombie: it exists in the system with no one to unlink it (only the process that called `create` can do that).
 

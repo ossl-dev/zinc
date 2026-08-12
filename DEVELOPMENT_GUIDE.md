@@ -1,6 +1,6 @@
-# Zinc — Development Guide
+# Zinc, Development Guide
 
-Zinc is a cross-process shared memory library with a Rust core and C ABI surface, enabling zero-copy data sharing across **any** language — Python, Node.js, Bun, Deno, Go, C++, Java, C#, and more. 
+Zinc is a cross-process shared memory library with a Rust core and C ABI surface, enabling zero-copy data sharing across **any** language, Python, Node.js, Bun, Deno, Go, C++, Java, C#, and more. 
 
 One Rust crate compiles to `libzinc_core.{so,dylib}`. Every language adapter calls the same C ABI via its native FFI mechanism. No reimplementation of logic in adapters.
 
@@ -15,7 +15,7 @@ zinc/
 │   └── toolchain.yml
 ├── .github/workflows/ci.yml   # 2-platform CI (Linux, macOS)
 │
-├── core/                      # Rust — the heart of everything
+├── core/                      # Rust, the heart of everything
 │   ├── Cargo.toml
 │   ├── build.rs               # cbindgen → ../include/zinc.h
 │   ├── cbindgen.toml
@@ -23,8 +23,8 @@ zinc/
 │   └── src/
 │       ├── lib.rs             # pub(crate) re-exports + extern "C" surface
 │       ├── error.rs           # ZincError (thiserror)
-│       ├── header.rs          # RegionHeader — #[repr(C, align(64))]
-│       ├── region.rs          # SharedRegion — create/open/close/unlink
+│       ├── header.rs          # RegionHeader, #[repr(C, align(64))]
+│       ├── region.rs          # SharedRegion, create/open/close/unlink
 │       ├── ring.rs            # Lock-free MPSC notification ring
 │       ├── sync.rs            # Cross-process notify/wait (futex + spin fallback)
 │       └── platform/
@@ -52,14 +52,14 @@ zinc/
 └── NEW_ARCHITECTURE.md        # Full implementation plan
 ```
 
-Start reading in `core/src/region.rs` — that's where `SharedRegion::create()` and `SharedRegion::open()` live.
+Start reading in `core/src/region.rs`, that's where `SharedRegion::create()` and `SharedRegion::open()` live.
 
 ---
 
 ## Prerequisites
 
-- **Rust ≥ 1.82** — [rustup.rs](https://rustup.rs/)
-- **Moon ≥ 2.0** — `curl -fsSL https://moonrepo.dev/install/moon.sh | bash`
+- **Rust ≥ 1.82**, [rustup.rs](https://rustup.rs/)
+- **Moon ≥ 2.0**, `curl -fsSL https://moonrepo.dev/install/moon.sh | bash`
 - Language runtimes as needed (Python, Node, Go, etc.)
 
 ```bash
@@ -79,8 +79,8 @@ moon run core:build
 ```
 
 Outputs:
-- `core/target/release/libzinc_core.{dylib,so,dll}` — loaded by all adapters via FFI
-- `include/zinc.h` — auto-generated C header (opaque `void*` handles)
+- `core/target/release/libzinc_core.{dylib,so,dll}`, loaded by all adapters via FFI
+- `include/zinc.h`, auto-generated C header (opaque `void*` handles)
 
 ---
 
@@ -132,7 +132,7 @@ Every adapter calls the same 8 C functions in `include/zinc.h`:
 
 ### Performance
 
-- `RegionHeader` is exactly 64 bytes (one cache line) — no false sharing
+- `RegionHeader` is exactly 64 bytes (one cache line), no false sharing
 - `parking_lot` mutexes (not std), `CachePadded` atomics
 - Lock-free MPSC ring (256 slots, cache-aligned) for notification tokens
 - Zero heap allocations in hot path (`zinc_ptr`, `zinc_notify`)
@@ -140,8 +140,8 @@ Every adapter calls the same 8 C functions in `include/zinc.h`:
 
 ### Platform Support
 
-- **Linux**: `shm_open` + `mmap` + futex — full support
-- **macOS**: `shm_open` + `mmap` + spin-wait — full support
+- **Linux**: `shm_open` + `mmap` + futex, full support
+- **macOS**: `shm_open` + `mmap` + spin-wait, full support
 
 **Windows is not supported.** Zinc is a POSIX-only library. `shm_open` and `mmap` do not exist on Windows, and there are no plans to port them.
 

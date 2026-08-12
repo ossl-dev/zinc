@@ -7,7 +7,7 @@ description: "Regions, handles, naming, and the architecture of shared memory"
 
 `SharedRegion` is the central type in Zinc. It represents a handle to a mapped shared memory segment. Every language adapter wraps this concept in its native type system: a class in Python, Go, Java, and C#, a struct in Rust, a header-only class in C++.
 
-A region is created by one process and opened by others. The creator's handle carries ownership privileges. Openers get read/write access to the data area. This isn't about security — it's about lifecycle: only the creator may unlink the segment from the system.
+A region is created by one process and opened by others. The creator's handle carries ownership privileges. Openers get read/write access to the data area. This isn't about security, it's about lifecycle: only the creator may unlink the segment from the system.
 
 ```rust
 // Creator: owns the segment, may unlink on drop
@@ -19,7 +19,7 @@ let region = SharedRegion::open("my-segment");
 
 ## Memory layout
 
-Every mapped region starts with a 64-byte header — exactly one cache line on modern x86 and ARM. The header stores library metadata: a magic number for corruption detection, a version field for forward compatibility, a reference count, the creator's PID, and the notification sequence counter.
+Every mapped region starts with a 64-byte header, exactly one cache line on modern x86 and ARM. The header stores library metadata: a magic number for corruption detection, a version field for forward compatibility, a reference count, the creator's PID, and the notification sequence counter.
 
 ```
 Offset  Size  Field         Description
@@ -94,6 +94,6 @@ The caveat: Zinc does not provide built-in data structure serialization. If you 
 
 Zinc provides a lightweight notify/wait mechanism built on an atomic sequence counter. Not a general-purpose synchronization primitive. It solves one pattern: a producer writes data, then signals consumers.
 
-For complex synchronization — multiple producers, reader-writer locks, condition variables that guard multi-field updates — reach for atomic operations on the shared data itself. The notify/wait mechanism only signals that _something_ changed. It does not say what changed or protect against races.
+For complex synchronization, multiple producers, reader-writer locks, condition variables that guard multi-field updates, reach for atomic operations on the shared data itself. The notify/wait mechanism only signals that _something_ changed. It does not say what changed or protect against races.
 
 See the [notify/wait guide](/guides/notify-wait) for detailed usage.

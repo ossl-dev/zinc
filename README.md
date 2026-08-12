@@ -14,7 +14,7 @@
 [![Java](https://img.shields.io/badge/adapter-Java-ED8B00)](adapters/java/)
 [![C#](https://img.shields.io/badge/adapter-C%23-512BD4)](adapters/csharp/)
 
-Zinc gives processes in **any language** direct access to the same physical memory — across Rust, Python, Go, Node.js, Bun, Deno, C++, Java, C#, and more. No serialization, no copies, no kernel round-trips. Just `mmap` under the hood and a zero-copy view of the same bytes in every language.
+Zinc gives processes in **any language** direct access to the same physical memory, across Rust, Python, Go, Node.js, Bun, Deno, C++, Java, C#, and more. No serialization, no copies, no kernel round-trips. Just `mmap` under the hood and a zero-copy view of the same bytes in every language.
 
 **Windows is not supported.** Zinc is a Linux/macOS library built on POSIX shared memory (`shm_open` + `mmap`).
 
@@ -24,9 +24,9 @@ Think `SharedArrayBuffer`, but cross-language and cross-process.
 
 ## Why
 
-`SharedArrayBuffer` lets Worker threads share memory within a single process. There's no equivalent across processes or languages. If you want two processes to share a large dataset — video frames, ML model outputs, game state, a shared cache — your options are: serialize it, copy it through a socket, deserialize it on the other side.
+`SharedArrayBuffer` lets Worker threads share memory within a single process. There's no equivalent across processes or languages. If you want two processes to share a large dataset (video frames, ML model outputs, game state, a shared cache), your options are: serialize it, copy it through a socket, deserialize it on the other side.
 
-Zinc maps the same physical RAM pages into both processes via POSIX shared memory. Write a float in Python, read it in Go. No syscall, no copy, no serialization. The transfer time is zero because there's nothing to transfer — it's already there.
+Zinc maps the same physical RAM pages into both processes via POSIX shared memory. Write a float in Python, read it in Go. No syscall, no copy, no serialization. The transfer time is zero because there is nothing to transfer. It is already there.
 
 ---
 
@@ -53,7 +53,7 @@ from zinc import SharedRegion
 
 r = SharedRegion.open("/my-data")
 arr = r.as_numpy(dtype=np.float32)
-print(arr[0])  # 42.0 — same physical memory
+print(arr[0])  # 42.0, same physical memory
 ```
 
 ### Go
@@ -122,7 +122,7 @@ Every language adapter calls the same 8 C functions via its native FFI mechanism
 
 ## Performance
 
-The shared buffer path has no "transfer" to benchmark — both processes access the same RAM. The cost is a single `mmap` setup call, then memory reads/writes at native speed (CPU cache → RAM bandwidth).
+The shared buffer path has no "transfer" to benchmark: both processes access the same RAM. The cost is a single `mmap` setup call, then memory reads/writes at native speed (CPU cache → RAM bandwidth).
 
 Target: notify/wait roundtrip < 5µs on Linux.
 
@@ -132,7 +132,7 @@ Target: notify/wait roundtrip < 5µs on Linux.
 
 | Language | Mechanism | Status | Path | README |
 |---|---|---|---|---|
-| Rust | Direct crate | Core ready | `core/` | — |
+| Rust | Direct crate | Core ready | `core/` |, |
 | Python | cffi + numpy | Tests passing | `adapters/python/` | [README](adapters/python/README.md) |
 | Go | cgo | Tests passing | `adapters/go/` | [README](adapters/go/README.md) |
 | Node.js | napi-rs | Builds | `adapters/node/` | [README](adapters/node/README.md) |
@@ -158,8 +158,8 @@ Output: `core/target/release/libzinc_core.{so,dylib}`
 
 ## Prerequisites
 
-- **Rust ≥ 1.82** — [rustup.rs](https://rustup.rs/)
-- **Moon ≥ 2.0** — [moonrepo.dev](https://moonrepo.dev/) (monorepo tool)
+- **Rust ≥ 1.82**, [rustup.rs](https://rustup.rs/)
+- **Moon ≥ 2.0**, [moonrepo.dev](https://moonrepo.dev/) (monorepo tool)
 - Language runtimes as needed
 
 ---
@@ -172,4 +172,4 @@ See [`DEVELOPMENT_GUIDE.md`](./DEVELOPMENT_GUIDE.md) for full build instructions
 
 ## License
 
-MIT — see [`LICENSE`](./LICENSE).
+MIT, see [`LICENSE`](./LICENSE).
