@@ -11,8 +11,6 @@ projects:
   adapter-java: 'adapters/java'
   adapter-csharp: 'adapters/csharp'
   docs: 'docs'
-  example-polyglot: 'examples/polyglot-counter'
-  example-ml: 'examples/ml-pipeline'
 
 vcs:
   manager: git

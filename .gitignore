@@ -9,7 +9,6 @@ target/
 __pycache__/
 .pytest_cache/
 *.node
-adapters/node/index.js
 adapters/node/index.d.ts
 adapters/csharp/**/bin/
 adapters/csharp/**/obj/

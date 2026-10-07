@@ -2,6 +2,11 @@
 name = "zinc"
 version = "0.1.0"
 requires-python = ">=3.9"
+dependencies = ["cffi>=1.16"]
+
+[project.optional-dependencies]
+numpy = ["numpy>=1.26"]
+test = ["pytest>=7", "numpy>=1.26"]
 
 [build-system]
 requires = ["setuptools"]

@@ -18,15 +18,17 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            core/target
-          key: release-${{ runner.os }}-${{ hashFiles('core/Cargo.toml') }}
-      - run: cargo build --release --manifest-path core/Cargo.toml
+            target
+          key: release-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+      - run: cargo build --release --manifest-path core/Cargo.toml --locked
       - name: Upload core library
         uses: actions/upload-artifact@v4
         with:
           name: libzinc_core-${{ runner.os }}
-          path: core/target/release/libzinc_core.*
-          if-no-files-found: warn
+          path: |
+            target/release/libzinc_core.so
+            target/release/libzinc_core.dylib
+          if-no-files-found: error
 
   release-github:
     needs: [build-core]
@@ -44,6 +46,7 @@ jobs:
         with:
           files: |
             adapters/cpp/include/zinc.hpp
-            libzinc_core-Linux/libzinc_core.so
-            libzinc_core-macOS/libzinc_core.dylib
+            include/zinc.h
+            libzinc_core.so
+            libzinc_core.dylib
           generate_release_notes: true

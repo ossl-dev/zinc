@@ -2,6 +2,7 @@
 name = "zinc-node"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 
 [lib]
 crate-type = ["cdylib"]
@@ -9,7 +10,7 @@ crate-type = ["cdylib"]
 [dependencies]
 napi = { version = "2", features = ["async"] }
 napi-derive = "2"
-zinc-core = { path = "../../core" }
+zinc-core = { path = "../../core", version = "0.1.0" }
 
 [build-dependencies]
 napi-build = "2"

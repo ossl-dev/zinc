@@ -4,13 +4,13 @@ on:
     paths-ignore:
       - '**.md'
       - '.gitignore'
-      - '.moon/**'
-      - 'adapters/**/README.md'
       - 'docs/**'
   pull_request:
     paths:
       - 'core/**'
       - 'adapters/**'
+      - 'include/**'
+      - 'tests/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/ci.yml'
@@ -20,31 +20,44 @@ jobs:
   core:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Cache cargo dependencies
-        uses: actions/cache@v4
+        with:
+          components: rustfmt, clippy
+      - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            core/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('core/Cargo.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-      - run: cargo test --manifest-path core/Cargo.toml
-      - run: cargo clippy --manifest-path core/Cargo.toml -- -D warnings
+            target
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('Cargo.lock') }}
+      - run: cargo fmt --all -- --check
+      - run: cargo test --workspace --all-targets --locked
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   cargo-deny:
+    strategy:
+      matrix:
+        manifest: [Cargo.toml, adapters/node/Cargo.toml]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: ${{ matrix.manifest }}
+
+  msrv:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - run: cargo check -p zinc-core --lib --locked
 
   valgrind:
     runs-on: ubuntu-latest
@@ -52,81 +65,58 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install valgrind
-        run: sudo apt-get update -y && sudo apt-get install -y valgrind
-      - name: Cache cargo dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            core/target
-          key: valgrind-cargo-${{ hashFiles('core/Cargo.toml') }}
-      - name: Build tests
-        run: cargo test --manifest-path core/Cargo.toml --no-run
-      - name: Run under valgrind
+      - run: sudo apt-get update -y && sudo apt-get install -y valgrind
+      - name: Build test executable
+        run: cargo test -p zinc-core --lib --no-run --locked --message-format=json > test-artifacts.json
+      - name: Run tests under valgrind
+        shell: bash
         run: |
-          set +e
-          valgrind --leak-check=full --error-exitcode=1 \
-            cargo test --manifest-path core/Cargo.toml 2>&1 | tee valgrind.log
-          echo "--- Valgrind leak summary ---"
-          grep -E "definitely lost|indirectly lost|possibly lost|still reachable" valgrind.log || true
+          test_binary=$(python3 -c 'import json; print(next(a["executable"] for a in map(json.loads, open("test-artifacts.json")) if a.get("reason") == "compiler-artifact" and a.get("executable") and a["profile"]["test"]))')
+          valgrind --leak-check=full --errors-for-leak-kinds=definite,indirect \
+            --error-exitcode=1 "$test_binary" --test-threads=1
 
-  python:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: [core]
+  adapters:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      LD_LIBRARY_PATH: ${{ github.workspace }}/target/release
+      DYLD_LIBRARY_PATH: ${{ github.workspace }}/target/release
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build core library
-        run: cargo build --release --manifest-path core/Cargo.toml
+      - run: cargo build --release -p zinc-core --lib --example interop --locked
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install Python deps
-        run: pip install pytest cffi
-      - name: Run Python tests
-        run: |
-          export LD_LIBRARY_PATH="$PWD/core/target/release:$LD_LIBRARY_PATH"
-          export DYLD_LIBRARY_PATH="$PWD/core/target/release:$DYLD_LIBRARY_PATH"
-          python -m pytest adapters/python/tests/ -v
-
-  go:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: [core]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Build core library
-        run: cargo build --release --manifest-path core/Cargo.toml
+      - run: pip install -e 'adapters/python[test]'
+      - run: python -m pytest adapters/python/tests -v
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23'
-      - name: Go vet
-        run: |
-          export LD_LIBRARY_PATH="$PWD/core/target/release:$LD_LIBRARY_PATH"
-          go vet ./adapters/go/...
-      - name: Go test
-        run: |
-          export LD_LIBRARY_PATH="$PWD/core/target/release:$LD_LIBRARY_PATH"
-          go test -v ./adapters/go/...
-
-  node:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: [core]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Build core library
-        run: cargo build --release --manifest-path core/Cargo.toml
+      - run: go vet ./... && go test -v ./...
+        working-directory: adapters/go
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Build Node addon
+      - run: npm ci && npm run build && npm test
         working-directory: adapters/node
-        run: |
-          npm install
-          npm run build
+      - uses: oven-sh/setup-bun@v2
+      - run: bun test adapters/bun/tests
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: deno test --unstable-ffi --allow-ffi --allow-read --config adapters/deno/deno.json adapters/deno/tests/zinc_test.ts
+      - run: cmake -S adapters/cpp -B target/cpp-tests && cmake --build target/cpp-tests && ctest --test-dir target/cpp-tests --output-on-failure
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: mvn --batch-mode test
+        working-directory: adapters/java
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: dotnet test adapters/csharp/tests/Zinc.Tests.csproj

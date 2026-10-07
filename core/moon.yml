@@ -7,15 +7,15 @@ tasks:
       - "build.rs"
       - "cbindgen.toml"
     outputs:
-      - "target/release/libzinc_core.*"
+      - "../target/release/libzinc_core.*"
       - "../include/zinc.h"
 
   test:
-    command: cargo test
+    command: cargo test --all-targets --locked
     deps:
       - build
 
   lint:
-    command: cargo clippy -- -D warnings
+    command: cargo clippy --all-targets --locked -- -D warnings
     deps:
       - build
