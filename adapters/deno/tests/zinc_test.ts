@@ -3,6 +3,17 @@ import { SharedRegion } from "../src/mod.ts";
 
 const name = `deno_test_${Date.now().toString(36)}`;
 
+Deno.test("invalid timeouts are rejected before FFI coercion", () => {
+  const r = SharedRegion.create(name, 16384);
+  try {
+    for (const value of [-1, NaN, Infinity, 1.5, 2 ** 32]) {
+      assertThrows(() => r.wait(value), Error, "timeout");
+    }
+  } finally {
+    r.close();
+  }
+});
+
 Deno.test("create and buffer", () => {
   const r = SharedRegion.create(name, 16384);
   const buf = r.buffer();

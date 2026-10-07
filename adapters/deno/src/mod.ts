@@ -96,6 +96,9 @@ export class SharedRegion {
   }
 
   wait(timeoutMs = 1000): boolean {
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 0xFFFFFFFF) {
+      throw new Error("invalid timeout");
+    }
     const code = lib.symbols.zinc_wait(this.#liveHandle(), timeoutMs);
     if (code === -110) return false;
     if (code !== 0) throw new Error(`zinc_wait failed: ${code}`);

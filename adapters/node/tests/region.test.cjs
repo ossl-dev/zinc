@@ -6,6 +6,14 @@ const capacity = 16384;
 let id = 0;
 const name = () => `node_${process.pid}_${++id}`;
 
+test('invalid numbers are rejected before native coercion', () => {
+  const region = ZincRegion.create(name(), capacity);
+  for (const value of [-1, NaN, Infinity, 1.5, 2 ** 32]) {
+    assert.throws(() => ZincRegion.create(name(), value), /capacity/);
+    assert.throws(() => region.wait(value), /timeout/);
+  }
+});
+
 async function collectUntil(predicate) {
   for (let i = 0; i < 100; i++) {
     global.gc();

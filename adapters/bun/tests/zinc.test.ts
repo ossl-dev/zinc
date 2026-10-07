@@ -4,6 +4,17 @@ import { SharedRegion } from "../src/index.ts";
 describe("SharedRegion (Bun)", () => {
   const name = `bun_test_${Date.now().toString(36)}`;
 
+  test("invalid timeouts are rejected before FFI coercion", () => {
+    const r = SharedRegion.create(name, 16384);
+    try {
+      for (const value of [-1, NaN, Infinity, 1.5, 2 ** 32]) {
+        expect(() => r.wait(value)).toThrow("timeout");
+      }
+    } finally {
+      r.close();
+    }
+  });
+
   test("create and buffer", () => {
     const r = SharedRegion.create(name, 16384);
     const buf = r.buffer();
