@@ -135,3 +135,25 @@ consumer.join().unwrap()?;
 ## Working with the header
 
 `RegionHeader` is exported for advanced use but you rarely need it. It lives at the base of mapped memory and you can access it with unsafe pointer arithmetic. `SharedRegion` covers most use cases.
+
+## Ring
+
+`RingStorage` owns an initialized queue of `u64` values. Capacity must be a power of two greater than one. `RingStorage::default()` uses 256 slots.
+
+```rust
+use zinc_core::ring::RingStorage;
+
+let storage = RingStorage::new(1024)?;
+let ring = storage.ring();
+assert!(ring.try_push(42));
+assert_eq!(ring.pop(), Some(42));
+assert!(ring.is_empty());
+```
+
+A ring supports multiple producers and consumers. `push` returns `RingFull` when it cannot reserve a slot; `try_push` returns a boolean. `pop` returns `None` when the next slot is not ready. Operations do not park the thread, but reservations can delay later items if a producer is descheduled before publishing.
+
+`len`, `is_empty`, and `remaining` are snapshots. Under contention, `len` includes reserved slots that have not yet been published. Use push/pop results for flow control.
+
+For shared memory, `Ring::from_raw_with_capacity` attaches to separately initialized storage. This is unsafe: the caller must provide aligned slots, valid atomic counters, and keep the mapping alive. The header's ring counters are reserved; `SharedRegion` does not initialize a ring in its data area.
+
+Run `cargo bench -p zinc-core --bench ring` to measure push/pop and producer contention. Contention measurements include thread startup for each batch of 4096 values.

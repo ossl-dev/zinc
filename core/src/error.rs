@@ -20,6 +20,8 @@ pub enum ZincError {
         #[source]
         source: std::io::Error,
     },
+    #[error("ring capacity must be a power of two greater than one")]
+    InvalidRingCapacity,
     #[error("region is full")]
     RingFull,
     #[error("wait timed out")]

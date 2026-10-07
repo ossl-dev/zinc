@@ -67,11 +67,11 @@ Stuff that makes the existing thing better, faster, safer.
 
 ### The ring buffer
 
-- [ ] Make ring capacity configurable at create time (currently hardcoded 256)
-- [ ] Add `MPMC` ring variant (currently MPSC only)
-- [ ] Add `Ring::try_push` that returns immediately instead of erroring (retry loop differs per adapter)
-- [ ] Add ring stats: `len()`, `is_empty()`, `remaining()`
-- [ ] Benchmarks for ring push/pop under contention
+- [x] Make ring capacity configurable (`RingStorage::new` and `Ring::from_raw_with_capacity`)
+- [x] Support multiple producers and consumers in the ring
+- [x] Add `Ring::try_push`, returning a boolean when a slot cannot be reserved
+- [x] Add ring stats: `len()`, `is_empty()`, `remaining()`
+- [x] Benchmarks for ring push/pop under contention
 
 ### Error handling
 

@@ -1,8 +1,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
+
 use crate::{Result, ZincError};
 
-const RING_CAPACITY: usize = 256;
-const MASK: u64 = (RING_CAPACITY as u64) - 1;
+const DEFAULT_CAPACITY: usize = 256;
 
 #[repr(C, align(64))]
 struct RingSlot {
@@ -10,211 +10,272 @@ struct RingSlot {
     value: AtomicU64,
 }
 
-pub struct Ring {
-    slots: *const [RingSlot; RING_CAPACITY],
-    head: *const AtomicU64,
-    tail: *const AtomicU64,
+/// Owns initialized ring storage. Borrow a ring with `ring()`.
+pub struct RingStorage {
+    slots: Box<[RingSlot]>,
+    head: AtomicU64,
+    tail: AtomicU64,
 }
 
-unsafe impl Send for Ring {}
-unsafe impl Sync for Ring {}
+impl RingStorage {
+    pub fn new(capacity: usize) -> Result<Self> {
+        if capacity < 2
+            || !capacity.is_power_of_two()
+            || capacity
+                .checked_mul(std::mem::size_of::<RingSlot>())
+                .filter(|&bytes| bytes <= isize::MAX as usize)
+                .is_none()
+        {
+            return Err(ZincError::InvalidRingCapacity);
+        }
+        let slots = (0..capacity)
+            .map(|i| RingSlot {
+                seq: AtomicU64::new(i as u64),
+                value: AtomicU64::new(0),
+            })
+            .collect();
+        Ok(Self {
+            slots,
+            head: AtomicU64::new(0),
+            tail: AtomicU64::new(0),
+        })
+    }
 
-impl Ring {
+    pub fn ring(&self) -> Ring<'_> {
+        Ring {
+            slots: &self.slots,
+            head: &self.head,
+            tail: &self.tail,
+        }
+    }
+}
+
+impl Default for RingStorage {
+    fn default() -> Self {
+        Self::new(DEFAULT_CAPACITY).expect("valid default capacity")
+    }
+}
+
+/// A bounded queue supporting concurrent producers and consumers.
+pub struct Ring<'a> {
+    slots: &'a [RingSlot],
+    head: &'a AtomicU64,
+    tail: &'a AtomicU64,
+}
+
+impl<'a> Ring<'a> {
     /// # Safety
-    /// `ptr` must point to at least `RING_CAPACITY * size_of::<RingSlot>()` bytes of
-    /// shared, writable memory. `head` and `tail` must be valid pointers to shared
-    /// `AtomicU64` counters that outlive this `Ring`.
-    pub unsafe fn from_raw(
+    /// Storage must be aligned to 64 bytes and contain 256 initialized slots.
+    /// All pointers must remain valid for `'a` and be accessed only through this protocol.
+    /// For an empty ring, counters are zero and each slot's sequence is its index.
+    pub unsafe fn from_raw(ptr: *mut u8, head: *const AtomicU64, tail: *const AtomicU64) -> Self {
+        unsafe { Self::from_raw_with_capacity(ptr, head, tail, DEFAULT_CAPACITY) }
+    }
+
+    /// # Safety
+    /// The same requirements as `from_raw` apply, with `capacity` slots of 64 bytes.
+    /// Capacity must be a power of two greater than one. Attaching must not reinitialize live storage.
+    pub unsafe fn from_raw_with_capacity(
         ptr: *mut u8,
         head: *const AtomicU64,
         tail: *const AtomicU64,
+        capacity: usize,
     ) -> Self {
+        assert!(capacity >= 2 && capacity.is_power_of_two());
         Self {
-            slots: ptr as *const _,
-            head,
-            tail,
+            slots: unsafe { std::slice::from_raw_parts(ptr.cast::<RingSlot>(), capacity) },
+            head: unsafe { &*head },
+            tail: unsafe { &*tail },
         }
     }
 
     pub fn push(&self, value: u64) -> Result<()> {
-        let head = unsafe { (*self.head).load(Ordering::Relaxed) };
-        let slot = unsafe { &(*self.slots)[(head & MASK) as usize] };
-        if slot.seq.load(Ordering::Acquire) != head {
-            return Err(ZincError::RingFull);
+        let mut head = self.head.load(Ordering::Relaxed);
+        loop {
+            let slot = &self.slots[head as usize & (self.capacity() - 1)];
+            let diff = slot.seq.load(Ordering::Acquire).wrapping_sub(head) as i64;
+            if diff == 0 {
+                match self.head.compare_exchange_weak(
+                    head,
+                    head.wrapping_add(1),
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => {
+                        slot.value.store(value, Ordering::Relaxed);
+                        slot.seq.store(head.wrapping_add(1), Ordering::Release);
+                        return Ok(());
+                    }
+                    Err(actual) => head = actual,
+                }
+            } else if diff < 0 {
+                return Err(ZincError::RingFull);
+            } else {
+                head = self.head.load(Ordering::Relaxed);
+            }
+            std::hint::spin_loop();
         }
-        slot.value.store(value, Ordering::Relaxed);
-        slot.seq.store(head + 1, Ordering::Release);
-        unsafe {
-            (*self.head).fetch_add(1, Ordering::Release);
-        }
-        Ok(())
+    }
+
+    pub fn try_push(&self, value: u64) -> bool {
+        self.push(value).is_ok()
     }
 
     pub fn pop(&self) -> Option<u64> {
-        let tail = unsafe { (*self.tail).load(Ordering::Relaxed) };
-        let slot = unsafe { &(*self.slots)[(tail & MASK) as usize] };
-        if slot.seq.load(Ordering::Acquire) != tail + 1 {
-            return None;
+        let mut tail = self.tail.load(Ordering::Relaxed);
+        loop {
+            let slot = &self.slots[tail as usize & (self.capacity() - 1)];
+            let diff = slot
+                .seq
+                .load(Ordering::Acquire)
+                .wrapping_sub(tail.wrapping_add(1)) as i64;
+            if diff == 0 {
+                match self.tail.compare_exchange_weak(
+                    tail,
+                    tail.wrapping_add(1),
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => {
+                        let value = slot.value.load(Ordering::Relaxed);
+                        slot.seq
+                            .store(tail.wrapping_add(self.capacity() as u64), Ordering::Release);
+                        return Some(value);
+                    }
+                    Err(actual) => tail = actual,
+                }
+            } else if diff < 0 {
+                return None;
+            } else {
+                tail = self.tail.load(Ordering::Relaxed);
+            }
+            std::hint::spin_loop();
         }
-        let value = slot.value.load(Ordering::Relaxed);
-        slot.seq.store(tail + RING_CAPACITY as u64, Ordering::Release);
-        unsafe {
-            (*self.tail).fetch_add(1, Ordering::Release);
-        }
-        Some(value)
     }
 
-    /// Number of slots in the ring.
-    pub const fn capacity() -> usize {
-        RING_CAPACITY
+    pub fn capacity(&self) -> usize {
+        self.slots.len()
+    }
+
+    /// Approximate occupied slots, including reservations not yet published.
+    pub fn len(&self) -> usize {
+        let tail = self.tail.load(Ordering::Relaxed);
+        self.head
+            .load(Ordering::Relaxed)
+            .wrapping_sub(tail)
+            .min(self.capacity() as u64) as usize
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn remaining(&self) -> usize {
+        self.capacity() - self.len()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicU64;
-
-    struct RingFixture {
-        _slots: Box<[RingSlot; RING_CAPACITY]>,
-        _head: Box<AtomicU64>,
-        _tail: Box<AtomicU64>,
-        ring: Ring,
-    }
-
-    impl RingFixture {
-        fn new() -> Self {
-            let slots: Box<[RingSlot; RING_CAPACITY]> = unsafe {
-                let layout = std::alloc::Layout::new::<[RingSlot; RING_CAPACITY]>();
-                let ptr = std::alloc::alloc_zeroed(layout) as *mut [RingSlot; RING_CAPACITY];
-                Box::from_raw(ptr)
-            };
-            // Box to pin addresses — Ring holds raw pointers into these.
-            let head = Box::new(AtomicU64::new(0));
-            let tail = Box::new(AtomicU64::new(0));
-
-            for i in 0..RING_CAPACITY {
-                slots[i].seq.store(i as u64, Ordering::Relaxed);
-            }
-
-            let ring = unsafe {
-                Ring::from_raw(
-                    slots.as_ptr() as *mut u8,
-                    head.as_ref() as *const AtomicU64,
-                    tail.as_ref() as *const AtomicU64,
-                )
-            };
-
-            Self { _slots: slots, _head: head, _tail: tail, ring }
-        }
-    }
 
     #[test]
-    fn push_pop_single() {
-        let fix = RingFixture::new();
-        fix.ring.push(42).expect("push");
-        assert_eq!(fix.ring.pop(), Some(42));
-    }
-
-    #[test]
-    fn push_pop_sequence() {
-        let fix = RingFixture::new();
-        for i in 0..100u64 {
-            fix.ring.push(i).expect("push");
-        }
-        for i in 0..100u64 {
-            assert_eq!(fix.ring.pop(), Some(i));
-        }
-    }
-
-    #[test]
-    fn pop_empty_returns_none() {
-        let fix = RingFixture::new();
-        assert_eq!(fix.ring.pop(), None);
-    }
-
-    #[test]
-    fn push_full_returns_error() {
-        let fix = RingFixture::new();
-        for i in 0..RING_CAPACITY as u64 {
-            fix.ring.push(i).expect("push");
-        }
-        assert!(matches!(fix.ring.push(999), Err(ZincError::RingFull)));
-    }
-
-    #[test]
-    fn wrap_around_works() {
-        let fix = RingFixture::new();
-        // Fill and drain multiple times to test wrap-around
-        for cycle in 0..5 {
-            for i in 0..(RING_CAPACITY / 2) as u64 {
-                fix.ring.push(i + cycle * 1000).expect("push");
-            }
-            for _ in 0..(RING_CAPACITY / 2) {
-                assert!(fix.ring.pop().is_some());
-            }
-        }
-    }
-
-    #[test]
-    fn mpsc_stress() {
-        use std::thread;
-        use std::sync::Arc;
-
-        let expected_count = 50_000u64;
-        // We need shared ownership, so wrap the fixture
-        // Since Ring is Send+Sync (via raw pointers), share it in an Arc
-        let slots: Box<[RingSlot; RING_CAPACITY]> = unsafe {
-            let layout = std::alloc::Layout::new::<[RingSlot; RING_CAPACITY]>();
-            let ptr = std::alloc::alloc_zeroed(layout) as *mut [RingSlot; RING_CAPACITY];
-            Box::from_raw(ptr)
-        };
-        for i in 0..RING_CAPACITY {
-            slots[i].seq.store(i as u64, Ordering::Relaxed);
-        }
-
-        let slots_ptr = Arc::new(unsafe {
-            std::ptr::NonNull::new_unchecked(Box::into_raw(slots) as *mut [RingSlot; RING_CAPACITY])
-        });
-
-        let head = Arc::new(AtomicU64::new(0));
-        let tail = Arc::new(AtomicU64::new(0));
-
-        let ring = Arc::new(unsafe {
-            Ring::from_raw(
-                slots_ptr.as_ptr() as *mut u8,
-                Arc::as_ptr(&head) as *const AtomicU64,
-                Arc::as_ptr(&tail) as *const AtomicU64,
-            )
-        });
-
-        let ring_p = Arc::clone(&ring);
-        let producer = thread::spawn(move || {
-            for i in 0..expected_count {
-                while ring_p.push(i).is_err() {
-                    std::hint::spin_loop();
+    fn capacity_and_wraparound() {
+        for capacity in [2, 4, 256, 1024] {
+            let storage = RingStorage::new(capacity).unwrap();
+            let ring = storage.ring();
+            assert_eq!(ring.capacity(), capacity);
+            for cycle in 0..5 {
+                assert!(ring.is_empty());
+                assert_eq!(ring.pop(), None);
+                for i in 0..capacity {
+                    assert!(ring.try_push((cycle * capacity + i) as u64));
+                }
+                assert_eq!(ring.len(), capacity);
+                assert_eq!(ring.remaining(), 0);
+                assert!(!ring.try_push(999));
+                assert!(matches!(ring.push(999), Err(ZincError::RingFull)));
+                for i in 0..capacity {
+                    assert_eq!(ring.pop(), Some((cycle * capacity + i) as u64));
                 }
             }
-        });
+        }
+    }
 
-        let ring_c = Arc::clone(&ring);
-        let consumer = thread::spawn(move || {
-            let mut received = 0u64;
-            let mut last = None;
-            while received < expected_count {
-                if let Some(val) = ring_c.pop() {
-                    if let Some(prev) = last {
-                        assert_eq!(val, prev + 1, "out-of-order: {prev} -> {val}");
+    #[test]
+    fn invalid_capacity() {
+        for capacity in [0, 1, 3, 255] {
+            assert!(matches!(
+                RingStorage::new(capacity),
+                Err(ZincError::InvalidRingCapacity)
+            ));
+        }
+    }
+
+    #[test]
+    fn counter_overflow() {
+        let storage = RingStorage::new(4).unwrap();
+        let start = u64::MAX - 1;
+        storage.head.store(start, Ordering::Relaxed);
+        storage.tail.store(start, Ordering::Relaxed);
+        for offset in 0..4 {
+            let position = start.wrapping_add(offset);
+            storage.slots[position as usize & 3]
+                .seq
+                .store(position, Ordering::Relaxed);
+        }
+        let ring = storage.ring();
+        for value in 0..20 {
+            ring.push(value).unwrap();
+            assert_eq!(ring.pop(), Some(value));
+        }
+        assert!(ring.is_empty());
+    }
+
+    #[test]
+    fn multiple_producers_and_consumers() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize};
+        use std::time::{Duration, Instant};
+
+        const PRODUCERS: usize = 4;
+        const PER_PRODUCER: usize = 10_000;
+        const TOTAL: usize = PRODUCERS * PER_PRODUCER;
+        let storage = RingStorage::new(64).unwrap();
+        let ring = storage.ring();
+        let received = AtomicUsize::new(0);
+        let seen: Vec<_> = (0..TOTAL).map(|_| AtomicBool::new(false)).collect();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        std::thread::scope(|scope| {
+            for producer in 0..PRODUCERS {
+                let ring = &ring;
+                scope.spawn(move || {
+                    for i in 0..PER_PRODUCER {
+                        while !ring.try_push((producer * PER_PRODUCER + i) as u64) {
+                            assert!(Instant::now() < deadline, "producer stalled");
+                            std::thread::yield_now();
+                        }
                     }
-                    last = Some(val);
-                    received += 1;
-                }
+                });
             }
-            received
+            for _ in 0..4 {
+                scope.spawn(|| {
+                    while received.load(Ordering::Relaxed) < TOTAL {
+                        if let Some(value) = ring.pop() {
+                            assert!(
+                                !seen[value as usize].swap(true, Ordering::Relaxed),
+                                "duplicate {value}"
+                            );
+                            received.fetch_add(1, Ordering::Relaxed);
+                        } else {
+                            assert!(Instant::now() < deadline, "consumer stalled");
+                            std::thread::yield_now();
+                        }
+                    }
+                });
+            }
         });
-
-        producer.join().unwrap();
-        let count = consumer.join().unwrap();
-        assert_eq!(count, expected_count);
+        assert_eq!(received.load(Ordering::Relaxed), TOTAL);
+        assert!(seen.iter().all(|item| item.load(Ordering::Relaxed)));
+        assert!(ring.is_empty());
     }
 }

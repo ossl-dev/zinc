@@ -20,7 +20,7 @@ fn error_code(e: &ZincError) -> i32 {
         ZincError::AlreadyExists(_) => -17,   // EEXIST
         ZincError::NotFound(_) => -2,         // ENOENT
         ZincError::InvalidSize { .. } => -22, // EINVAL
-        ZincError::InvalidName => -22,
+        ZincError::InvalidName | ZincError::InvalidRingCapacity => -22,
         ZincError::PermissionDenied => -1,
         ZincError::RingFull => -11,        // EAGAIN
         ZincError::TimedOut => -110,       // ETIMEDOUT
