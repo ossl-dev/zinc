@@ -53,7 +53,7 @@ Stuff that makes the existing thing better, faster, safer.
 ### Synchronization
 
 - [ ] Replace macOS spin-wait with `__ulock_wait` / `__ulock_wake` (private API, needs detection + graceful fallback)
-- [ ] Add `try_wait()`, non-blocking check on notify_seq
+- [x] Add `try_wait()`, non-blocking check on notify_seq
 - [ ] Support waiting on multiple regions (`wait_any` / `wait_all`)
 - [ ] Linux: switch to `FUTEX_WAIT_BITSET` for multi-region wake targeting
 
@@ -76,7 +76,7 @@ Stuff that makes the existing thing better, faster, safer.
 ### Error handling
 
 - [ ] Distinguish `NotFound` vs `PermissionDenied` at platform level (currently fuzzy on macOS)
-- [ ] Add `ZincError::WouldBlock` as distinct from `RingFull` (for non-blocking ops)
+- [x] Add `ZincError::WouldBlock` as distinct from `RingFull` (for non-blocking ops)
 - [ ] Platform error messages: include the syscall that failed and errno string
 
 ### Platform support
@@ -193,7 +193,7 @@ Each adapter should feel native, not like an FFI wrapper.
 
 Not yet triaged into phases. Fix anytime.
 
-- [ ] macOS: `spin_loop` wait burns CPU, need real kernel wait primitive
+- [x] macOS: reduce idle wait CPU with bounded spinning and sleep backoff; kernel wait support remains in Phase 2
 - [ ] Crash recovery: zombie regions if creator dies without closing (need staleness detection)
 - [ ] `AlreadyExists` on stale regions: creator crashed, old name still in `/dev/shm`, new create fails. Need `create_or_replace` mode.
 - [ ] Name length limit not documented or enforced, POSIX `shm_open` names have system-dependent limits (usually 255 chars)

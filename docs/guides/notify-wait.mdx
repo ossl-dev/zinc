@@ -1,91 +1,48 @@
 ---
-title: "Notify and Wait"
-description: "Cross-process synchronization with the notify/wait mechanism"
+title: "Notify and wait"
+description: "Cross-process notification, timeouts, and memory ordering"
 ---
 
-Zinc provides a lightweight signal mechanism for cross-process synchronization. It is not a mutex or condition variable. It is a one-shot "data changed" signal.
+Each region has an atomic 32-bit notification counter. `notify()` increments it with release ordering. Each handle tracks the last counter value it consumed, starting at zero.
 
-## How it works
-
-The header of every shared region contains a `notify_seq` field: an atomic 32-bit counter. The notify/wait API builds on this single counter:
-
-1. The writer calls `notify()`, which atomically increments `notify_seq` and wakes any waiting threads.
-2. The reader calls `wait()`, which blocks until `notify_seq` changes from the value it last observed.
-
-This design avoids a common race condition. If the writer increments the sequence number before the reader starts waiting, and the reader waits for the _current_ value, it blocks forever, the counter already changed. Zinc's `wait()` tracks a per-handle `last_seq` value instead. It waits for the counter to change _from the last value it saw_, not from whatever it currently reads.
-
-On Linux, `wait()` uses the `futex` syscall. It parks the calling thread in the kernel until the futex address changes or the timeout expires. Zero overhead with no waiters: `notify()` still does an atomic increment and a `FUTEX_WAKE`, but with no waiters the wake is a no-op.
-
-On macOS and other non-Linux platforms, the wait uses an adaptive spin loop with exponential backoff. It spins for a brief period, then yields the thread, periodically checking for the timeout.
-
-## Usage pattern
-
-The typical pattern is a producer-consumer arrangement:
+`wait(timeout_ms)` returns when the counter differs from that handle's cursor. A notification sent before the wait remains pending. `try_wait()` checks and consumes a pending change without sleeping, returning `true` when it finds one.
 
 ```rust
-// Producer process
-let region = SharedRegion::create("stream", 65536)?;
-
-loop {
-    // Write new data
-    write_frame(region.as_ptr());
-
-    // Signal consumers
-    region.notify();
-}
+region.notify();
+assert!(region.try_wait());
+assert!(!region.try_wait());
 ```
 
-```rust
-// Consumer process
-let region = SharedRegion::open("stream")?;
-
-loop {
-    // Block until new data is available
-    region.wait(u32::MAX); // effectively infinite
-
-    // Read the latest data
-    process_frame(region.as_ptr());
-}
-```
+Several notifications can coalesce into one observed change. This API signals that state changed; it does not queue every event. A handle opened after earlier notifications can observe them on its first wait. After a full wrap of 2^32 unobserved notifications, the counter can equal the old cursor again.
 
 ## Timeouts
 
-`wait()` accepts a timeout in milliseconds. If no notification arrives within the timeout, the call returns `Err(TimedOut)` (or `false` / an exception in language adapters that wrap the error).
-
-A timeout of `u32::MAX` (4294967295) is effectively infinite. On Linux, the futex `timespec` for this value is about 49.7 days. For practical purposes, it will not expire.
+Timeouts are in milliseconds. Zero checks for a pending change and otherwise returns `TimedOut`. `u32::MAX` is about 49.7 days, not an infinite wait.
 
 ```rust
-// Wait up to 100 milliseconds
 match region.wait(100) {
-    Ok(()) => println!("data available"),
-    Err(ZincError::TimedOut) => println!("no update"),
-    Err(e) => println!("error: {e}"),
+    Ok(()) => process_update(),
+    Err(zinc_core::ZincError::TimedOut) => check_shutdown(),
+    Err(error) => return Err(error),
 }
 ```
 
-## Multiple waiters
+The C function `zinc_try_wait` returns 0 for a pending change, -11 (`WouldBlock`) if none is pending, and -22 for a null handle.
 
-`notify()` wakes all waiters simultaneously. Each waiter that returns from `wait()` reads the current `notify_seq` into its `last_seq` and returns. All waiters see the same counter value, which means they all see the same generation of data.
+## Multiple readers
 
-This is by design: if you have one writer and multiple readers, all readers are notified of every update. Each reader independently reads the shared data. There is no need for coordinated wake order.
+Open a separate handle for each reader that needs an independent notification cursor. Linux wakes all threads blocked on the region's futex. Concurrent waits on the same handle share a cursor and can coalesce observations.
 
-## Caveats
+## Data access
 
-**Notify coalesces.** If the writer calls `notify()` twice before the reader calls `wait()`, the reader sees only one notification. The sequence number goes from N to N+2. The reader's `wait()` unblocks because N+2 != last_seq. But the reader does not know there were two updates. That works for state-based sync (the consumer always reads the latest data), not event-based sync (where every event must be processed).
+A successful wait acquires the writer's release notification, publishing writes that happened before it. This does not prevent the writer from modifying data while readers use it. Use atomic data or an application protocol that prevents concurrent writes and reads. For a reusable plain-data buffer, readers need to acknowledge completion before the writer overwrites it.
 
-**Notify and wait are not a mutex.** Writing to shared memory while another thread is reading can produce torn reads if the data is larger than the native word size. If you need atomic multi-field updates, layer your own synchronization on top. A simple approach: use the first 8 bytes of the data area as a generation counter, increment it at the start of a write and again at the end. Readers can then detect in-progress writes by checking whether the two counters match.
+## Linux
 
-**Wait is not re-entrant.** Calling `wait()` recursively from different threads is not tested and not guaranteed to work correctly. Each handle should be used from at most one waiting thread at a time.
+`notify()` always calls `FUTEX_WAKE`, even when no thread is waiting. `wait()` checks the counter before calling `FUTEX_WAIT`, then checks it again after waking. Spurious wakes and interrupted syscalls retry within the original timeout. A wake alone does not count as a notification.
 
-## Linux futex details
+See [FUTEX_WAIT](https://man7.org/linux/man-pages/man2/FUTEX_WAIT.2const.html) for the kernel's wait semantics.
 
-On Linux, the notify/wait path goes through the `futex` syscall:
+## macOS
 
-- `notify()` calls `FUTEX_WAKE` with `wake_count = i32::MAX` to wake all waiters.
-- `wait()` calls `FUTEX_WAIT` with a `timespec` derived from the millisecond timeout.
-
-The `futex` syscall is well understood. Waking no waiters costs a single syscall. Waking one waiter costs two (one in the waker, one returning in the waiter after the kernel unparks it). Roundtrip latency is typically under 1 microsecond on modern hardware.
-
-## macOS and other platforms
-
-On macOS, `notify()` increments the sequence number atomically but does not perform a kernel-assisted wake. The `wait()` function spins in user space with a yield after 256 iterations. This is less efficient than futex but avoids the complexity of Mach semaphores or the private `ulock` API. Future versions may add a `ulock` backend for macOS.
+The fallback polls for 64 iterations, then sleeps for up to 50 microseconds between checks. Sleeping reduces idle CPU use, but wake latency depends on the scheduler. A shared kernel wait backend remains on the roadmap.

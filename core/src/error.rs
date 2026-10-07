@@ -24,6 +24,8 @@ pub enum ZincError {
     InvalidRingCapacity,
     #[error("region is full")]
     RingFull,
+    #[error("no notification is pending")]
+    WouldBlock,
     #[error("wait timed out")]
     TimedOut,
     #[error("invalid region header, size, or version")]

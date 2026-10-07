@@ -113,35 +113,41 @@ impl SharedRegion {
         crate::sync::notify(&self.header().notify_seq)
     }
 
-    /// Block until another handle notifies, or timeout.
-    ///
-    /// Uses a per-handle `last_seq` as the "expected" value for the
-    /// underlying futex/sync wait. This avoids the race where:
-    ///   writer: notify_seq.fetch_add(1)
-    ///   reader: load notify_seq → reads 1 (already incremented)
-    ///   reader: futex WAIT expected=1 → *addr == 1 → blocks forever
-    ///
-    /// With `last_seq`, the reader waits for a change from its own
-    /// last-known value, which is always the pre-notification value.
+    /// Consume a pending notification without blocking. Notifications may coalesce.
+    #[inline]
+    pub fn try_wait(&self) -> bool {
+        let mut last = self.last_seq.load(Ordering::Relaxed);
+        loop {
+            let current = self.header().notify_seq.load(Ordering::Acquire);
+            if current == last {
+                return false;
+            }
+            match self.last_seq.compare_exchange_weak(
+                last,
+                current,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(actual) => last = actual,
+            }
+        }
+    }
+
+    /// Wait for a pending notification or timeout. Use separate handles for independent cursors.
     #[inline]
     pub fn wait(&self, timeout_ms: u32) -> Result<()> {
-        let last = self.last_seq.load(Ordering::Acquire);
-        let seq_addr = &self.header().notify_seq;
-        // Fast path: seq already changed since last check
-        if seq_addr.load(Ordering::Acquire) != last {
-            self.last_seq
-                .store(seq_addr.load(Ordering::Relaxed), Ordering::Release);
+        let last = self.last_seq.load(Ordering::Relaxed);
+        if self.try_wait() {
             return Ok(());
         }
-        // Wait for seq to differ from our last-known value.
-        // On Linux futex: if seq != last, returns EAGAIN (handled as Ok).
-        // If seq == last, blocks until wake or timeout.
-        let result = crate::sync::wait(seq_addr, last, timeout_ms);
-        if result.is_ok() {
-            self.last_seq
-                .store(seq_addr.load(Ordering::Relaxed), Ordering::Release);
-        }
-        result
+        let seq_addr = &self.header().notify_seq;
+        crate::sync::wait(seq_addr, last, timeout_ms)?;
+        let current = seq_addr.load(Ordering::Acquire);
+        let _ = self
+            .last_seq
+            .compare_exchange(last, current, Ordering::Relaxed, Ordering::Relaxed);
+        Ok(())
     }
 
     #[inline(always)]
@@ -484,5 +490,25 @@ mod tests {
             SharedRegion::create("test_huge", capacity),
             Err(ZincError::InvalidSize { .. })
         ));
+    }
+
+    #[test]
+    fn pending_notifications_and_overflow() {
+        let name = "test_pending";
+        cleanup(name);
+        let owner = SharedRegion::create(name, page_size()).unwrap();
+        let reader = SharedRegion::open(name).unwrap();
+        assert!(!reader.try_wait());
+        owner.notify();
+        owner.notify();
+        assert!(reader.try_wait());
+        assert!(!reader.try_wait());
+        assert!(owner.try_wait());
+        assert!(matches!(reader.wait(0), Err(ZincError::TimedOut)));
+        owner.header().notify_seq.store(u32::MAX, Ordering::Relaxed);
+        reader.last_seq.store(u32::MAX, Ordering::Relaxed);
+        owner.notify();
+        assert!(reader.try_wait());
+        assert!(!reader.try_wait());
     }
 }

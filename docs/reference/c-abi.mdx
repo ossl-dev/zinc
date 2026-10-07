@@ -54,7 +54,7 @@ The returned pointer points directly into the `mmap`'d memory. Writes through th
 uintptr_t zinc_capacity(ZincHandle h);
 ```
 
-Returns the usable size of the region in bytes (total mapping size minus the 64-byte header). Returns 0 if the handle is null.
+Returns the usable size of the region in bytes (total mapping size minus the first header page). Returns 0 if the handle is null.
 
 ### zinc_close
 
@@ -62,7 +62,7 @@ Returns the usable size of the region in bytes (total mapping size minus the 64-
 void zinc_close(ZincHandle h);
 ```
 
-Closes a handle obtained from `zinc_create` or `zinc_open`. Decrements the internal reference count. If the closing handle is the creator handle and the reference count reaches zero, the shared memory segment is unlinked. Safe to call with a null handle (no-op).
+Closes a handle obtained from `zinc_create` or `zinc_open`. Decrements the internal reference count. If the closing handle is the creator, the name is unlinked. Existing mappings remain valid until their handles close. Safe to call with a null handle (no-op).
 
 After calling `zinc_close`, the handle is invalid and must not be passed to any other function.
 
@@ -112,3 +112,17 @@ Platform I/O errors are returned as the negated OS error code.
 ## Thread safety
 
 All functions are thread-safe. The internal `SharedRegion` operations use atomic operations for reference counting and notification. The handle itself is not synchronized. Passing the same handle to two threads concurrently is safe as long as neither calls `zinc_close` while the other uses it.
+
+## zinc_try_wait
+
+```c
+int32_t zinc_try_wait(ZincHandle h);
+```
+
+Consumes a pending notification without blocking. Returns 0 when the notification counter changed, -11 (`EAGAIN`, `WouldBlock`) when no change is pending, or -22 for a null handle. It shares the handle's cursor with `zinc_wait`.
+
+## Pointer contracts
+
+`zinc_create` and `zinc_open` reject null names and output pointers with -22. When an output pointer is valid, failure sets `*out` to null. Names must be readable, NUL-terminated UTF-8 strings; output pointers must point to writable handle storage.
+
+Non-null handles must come from a successful create or open. Close each handle exactly once, after all waits and data access finish. A null handle is accepted by pointer, capacity, notify, and close operations. Invalid non-null pointers and handles used after close violate the C contract.

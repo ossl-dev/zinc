@@ -17,6 +17,7 @@ The Rust core defines a `ZincError` enum with these variants:
 | `InvalidName` | -22 (EINVAL) | Name is empty or contains invalid characters |
 | `PermissionDenied` | -1 (EPERM) | OS permission check failed |
 | `Platform(io::Error)` | OS-dependent | Underlying OS call failed (shm_open, mmap, etc.) |
+| `WouldBlock` | -11 (EAGAIN) | Non-blocking wait has no pending notification |
 | `RingFull` | -11 (EAGAIN) | Internal notification ring has no free slots |
 | `TimedOut` | -110 (ETIMEDOUT) | `wait` returned without a notification |
 | `CorruptedRegion` | -74 (EBADMSG) | Header magic or version mismatch on open |
@@ -97,3 +98,5 @@ Any system call can produce an OS-level error. These are wrapped in `ZincError::
 | `EMFILE` (-24) | Process file descriptor limit |
 
 Check return values during development. In production, handle at least `AlreadyExists` (fall back to `open`), `NotFound` (retry or log), and `TimedOut` (treat as a heartbeat miss).
+
+`Syscall { syscall, source }` preserves the syscall name and operating-system error in Rust. The C ABI returns the negative errno. Permission failures from `shm_open` use `PermissionDenied` (-1).

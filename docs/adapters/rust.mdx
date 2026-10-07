@@ -80,6 +80,16 @@ match region.wait(1000) {
 
 Returns `Ok(())` on notification, `Err(ZincError::TimedOut)` on timeout, or `Err(ZincError)` for other errors.
 
+### try_wait
+
+Consumes a pending notification without blocking. Returns `false` if the counter has not changed since this handle's last observation.
+
+```rust
+if region.try_wait() {
+    process_update();
+}
+```
+
 ### Drop
 
 Regions close automatically when `SharedRegion` drops. If the handle is the owner and no other handles are open, the shared memory segment gets unlinked.
