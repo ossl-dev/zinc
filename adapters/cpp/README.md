@@ -81,3 +81,11 @@ gh release upload v0.1.0 adapters/cpp/include/zinc.hpp
 | macOS | ✅ |
 
 > Windows is not supported. Zinc requires POSIX `shm_open` + `mmap`.
+
+`try_wait()` consumes a pending notification without blocking. `wait()` returns false on timeout and throws on other failures. Names passed as `std::string_view` need not be NUL-terminated. Spans borrow the mapping and must not outlive it.
+
+```bash
+cmake -S adapters/cpp -B /tmp/zinc-cpp
+cmake --build /tmp/zinc-cpp
+ctest --test-dir /tmp/zinc-cpp --output-on-failure
+```

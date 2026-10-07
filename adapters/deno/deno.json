@@ -1,5 +1,9 @@
 {
   "name": "zinc-deno",
   "version": "0.1.0",
-  "exports": "./src/mod.ts"
+  "exports": "./src/mod.ts",
+  "imports": {
+    "@std/path": "jsr:@std/path@^1.0.0",
+    "@std/assert": "jsr:@std/assert@^1.0.0"
+  }
 }

@@ -2,20 +2,28 @@ package zinc
 
 import (
 	"fmt"
+	"os"
+	"sync/atomic"
 	"testing"
 )
 
+var testID uint32
+
+func testName() string {
+	return fmt.Sprintf("go_%d_%d", os.Getpid(), atomic.AddUint32(&testID, 1))
+}
+
 func TestCreateAndBytes(t *testing.T) {
-	name := fmt.Sprintf("gotest_%d", testing.Short())
-	r, err := Create(name, 4096)
+	name := testName()
+	r, err := Create(name, uint(os.Getpagesize()))
 	if err != nil {
-		t.Skipf("create failed (core lib may not be built): %v", err)
+		t.Fatalf("create failed (core lib may not be built): %v", err)
 	}
 	defer r.Close()
 
 	data := r.Bytes()
-	if len(data) != 4096 {
-		t.Fatalf("expected 4096 bytes, got %d", len(data))
+	if len(data) != os.Getpagesize() {
+		t.Fatalf("expected uint(os.Getpagesize()) bytes, got %d", len(data))
 	}
 	data[0] = 0xAB
 	if data[0] != 0xAB {
@@ -24,10 +32,10 @@ func TestCreateAndBytes(t *testing.T) {
 }
 
 func TestOpenAndRead(t *testing.T) {
-	name := fmt.Sprintf("gotest_open_%d", testing.Short())
-	owner, err := Create(name, 4096)
+	name := testName()
+	owner, err := Create(name, uint(os.Getpagesize()))
 	if err != nil {
-		t.Skipf("create failed: %v", err)
+		t.Fatalf("create failed: %v", err)
 	}
 	defer owner.Close()
 
@@ -45,14 +53,14 @@ func TestOpenAndRead(t *testing.T) {
 }
 
 func TestNotifyWait(t *testing.T) {
-	name := fmt.Sprintf("gotest_notify_%d", testing.Short())
-	region, err := Create(name, 4096)
+	name := testName()
+	region, err := Create(name, uint(os.Getpagesize()))
 	if err != nil {
-		t.Skipf("create failed: %v", err)
+		t.Fatalf("create failed: %v", err)
 	}
 	defer region.Close()
 
-	done := make(chan bool)
+	done := make(chan bool, 1)
 	go func() {
 		r2, err := Open(name)
 		if err != nil {
@@ -83,15 +91,40 @@ func TestOpenNonexistent(t *testing.T) {
 }
 
 func TestCreateDuplicate(t *testing.T) {
-	name := fmt.Sprintf("gotest_dup_%d", testing.Short())
-	r, err := Create(name, 4096)
+	name := testName()
+	r, err := Create(name, uint(os.Getpagesize()))
 	if err != nil {
-		t.Skipf("create failed: %v", err)
+		t.Fatalf("create failed: %v", err)
 	}
 	defer r.Close()
 
-	_, err = Create(name, 4096)
+	_, err = Create(name, uint(os.Getpagesize()))
 	if err == nil {
 		t.Fatal("expected error for duplicate create")
+	}
+}
+
+func TestPendingAndClosedHandle(t *testing.T) {
+	region, err := Create(testName(), uint(os.Getpagesize()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if region.TryWait() {
+		t.Fatal("unexpected notification")
+	}
+	region.Notify()
+	if !region.TryWait() {
+		t.Fatal("missing notification")
+	}
+	if region.Wait(0) {
+		t.Fatal("unexpected notification")
+	}
+	region.Close()
+	region.Close()
+	if len(region.Bytes()) != 0 {
+		t.Fatal("closed handle has data")
+	}
+	if _, err := Create("bad\x00name", uint(os.Getpagesize())); err == nil {
+		t.Fatal("NUL accepted")
 	}
 }

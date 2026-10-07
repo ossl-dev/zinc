@@ -12,6 +12,10 @@
 
 typedef void *ZincHandle;
 
+#ifdef __cplusplus
+extern "C" {
+#endif // __cplusplus
+
 /**
  * # Safety
  * Non-null `name` must be a readable, NUL-terminated string and `out` writable.
@@ -66,5 +70,9 @@ int32_t zinc_wait(ZincHandle aH,
 int32_t zinc_try_wait(ZincHandle aH);
 
 uint32_t zinc_version(void);
+
+#ifdef __cplusplus
+}  // extern "C"
+#endif  // __cplusplus
 
 #endif  /* ZINC_H */

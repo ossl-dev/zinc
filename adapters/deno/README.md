@@ -79,3 +79,5 @@ deno publish
 | macOS | ✅ |
 
 > Windows is not supported. Zinc requires POSIX `shm_open` + `mmap`.
+
+`tryWait()` consumes a pending notification without blocking. Closing is idempotent; other operations on a closed handle throw. Borrowed buffers must be released before closing the region, and waits block the calling thread. Use a worker when the writer runs JavaScript asynchronously.

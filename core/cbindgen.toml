@@ -1,4 +1,5 @@
 language = "C"
+cpp_compat = true
 include_guard = "ZINC_H"
 documentation = true
 tab_width = 4

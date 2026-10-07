@@ -33,11 +33,11 @@ import dev.zinc.SharedRegion;
 SharedRegion region = SharedRegion.create("/my-data", 4096);
 var buf = region.buffer();
 buf.putFloat(0, 42.0f);
-region.notify();
+region.signal();
 
 // Process B — open
 SharedRegion region2 = SharedRegion.open("/my-data");
-region2.wait(5000);
+region2.waitForNotification(5000);
 var buf2 = region2.buffer();
 float val = buf2.getFloat(0);
 System.out.println(val); // 42.0
@@ -55,10 +55,10 @@ Open an existing shared region.
 ### `region.buffer() → ByteBuffer`
 Zero-copy `ByteBuffer` backed by shared memory.
 
-### `region.notify()`
+### `region.signal()`
 Signal all waiters.
 
-### `region.wait(timeoutMs) → boolean`
+### `region.waitForNotification(timeoutMs) → boolean`
 Block until notified.
 
 ### `region.close()`
@@ -79,3 +79,5 @@ mvn deploy -P release
 | macOS | ✅ |
 
 > Windows is not supported. Zinc requires POSIX `shm_open` + `mmap`.
+
+Use `signal()` and `waitForNotification(timeoutMs)` for notifications; Java reserves `Object.notify()` and `Object.wait()` for monitors. `tryWait()` consumes a pending notification without blocking. Buffers use native byte order and are valid only while the region is open. Do not close a handle while another thread is using it.

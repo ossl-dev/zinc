@@ -4,29 +4,12 @@ namespace Zinc.Tests;
 
 public class SharedRegionTests
 {
-    private static bool Skip = !TryCreate();
-
-    private static bool TryCreate()
-    {
-        try
-        {
-            using var r = SharedRegion.Create("__cs_skip_test__", 4096);
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
     [Fact]
     public void CreateAndBuffer()
     {
-        if (Skip) return;
-
-        using var r = SharedRegion.Create($"cs_test_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}", 4096);
+        using var r = SharedRegion.Create("cs_" + Guid.NewGuid().ToString("N")[..16], 16384);
         var span = r.Bytes();
-        Assert.Equal(4096, span.Length);
+        Assert.Equal(16384, span.Length);
         span[0] = 0xAB;
         Assert.Equal(0xAB, span[0]);
     }
@@ -34,10 +17,8 @@ public class SharedRegionTests
     [Fact]
     public void OpenAndRead()
     {
-        if (Skip) return;
-
-        var name = $"cs_test_ro_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
-        using var owner = SharedRegion.Create(name, 4096);
+        var name = "cs_" + Guid.NewGuid().ToString("N")[..16];
+        using var owner = SharedRegion.Create(name, 16384);
         owner.Bytes()[0] = 0x42;
         owner.Bytes()[1] = 0x58;
 
@@ -49,10 +30,8 @@ public class SharedRegionTests
     [Fact]
     public void NotifyAndWait()
     {
-        if (Skip) return;
-
-        var name = $"cs_test_nw_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
-        using var region = SharedRegion.Create(name, 4096);
+        var name = "cs_" + Guid.NewGuid().ToString("N")[..16];
+        using var region = SharedRegion.Create(name, 16384);
 
         var t = new Thread(() =>
         {
@@ -71,17 +50,27 @@ public class SharedRegionTests
     [Fact]
     public void OpenNonexistent()
     {
-        if (Skip) return;
         Assert.Throws<InvalidOperationException>(() => SharedRegion.Open("__cs_nonexistent_xyz__"));
     }
 
     [Fact]
     public void DisposeIdempotent()
     {
-        if (Skip) return;
-
-        var r = SharedRegion.Create($"cs_test_disp_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}", 4096);
+        var r = SharedRegion.Create("cs_" + Guid.NewGuid().ToString("N")[..16], 16384);
         r.Dispose();
         r.Dispose(); // should not crash
+    }
+
+    [Fact]
+    public void PendingAndClosedHandle()
+    {
+        var region = SharedRegion.Create("cs_" + Guid.NewGuid().ToString("N")[..16], 16384);
+        Assert.False(region.TryWait());
+        region.Notify();
+        Assert.True(region.TryWait());
+        Assert.False(region.Wait(0));
+        region.Dispose();
+        Assert.Throws<ObjectDisposedException>(() => region.Notify());
+        Assert.Throws<ObjectDisposedException>(() => region.TryWait());
     }
 }

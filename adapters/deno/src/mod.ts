@@ -1,13 +1,13 @@
 import { join } from "@std/path";
 
-const suffix = {
-  darwin: "dylib",
-  linux: "so",
-}[Deno.build.os];
+if (Deno.build.os !== "darwin" && Deno.build.os !== "linux") {
+  throw new Error("Zinc supports Linux and macOS only");
+}
+const suffix = Deno.build.os === "darwin" ? "dylib" : "so";
 
 const libPath = join(
   import.meta.dirname!,
-  `../../../core/target/release/libzinc_core.${suffix}`,
+  `../../../target/release/libzinc_core.${suffix}`,
 );
 
 const lib = Deno.dlopen(libPath, {
@@ -35,6 +35,10 @@ const lib = Deno.dlopen(libPath, {
     parameters: ["pointer"],
     result: "void",
   },
+  zinc_try_wait: {
+    parameters: ["pointer"],
+    result: "i32",
+  },
   zinc_wait: {
     parameters: ["pointer", "u32"],
     result: "i32",
@@ -49,6 +53,10 @@ export class SharedRegion {
   }
 
   static create(name: string, capacity: number): SharedRegion {
+    if (name.includes("\0")) throw new Error("name contains NUL");
+    if (!Number.isSafeInteger(capacity) || capacity <= 0) {
+      throw new Error("invalid capacity");
+    }
     const buf = new BigUint64Array(1);
     const nameBuf = new TextEncoder().encode(name + "\0");
     const code = lib.symbols.zinc_create(
@@ -61,6 +69,7 @@ export class SharedRegion {
   }
 
   static open(name: string): SharedRegion {
+    if (name.includes("\0")) throw new Error("name contains NUL");
     const buf = new BigUint64Array(1);
     const nameBuf = new TextEncoder().encode(name + "\0");
     const code = lib.symbols.zinc_open(
@@ -72,8 +81,8 @@ export class SharedRegion {
   }
 
   buffer(): Uint8Array {
-    const dataPtr = lib.symbols.zinc_ptr(this.#handle);
-    const len = lib.symbols.zinc_capacity(this.#handle);
+    const dataPtr = lib.symbols.zinc_ptr(this.#liveHandle());
+    const len = Number(lib.symbols.zinc_capacity(this.#liveHandle()));
     if (dataPtr === null || len === 0) {
       throw new Error("Invalid region pointer");
     }
@@ -83,15 +92,33 @@ export class SharedRegion {
   }
 
   notify(): void {
-    lib.symbols.zinc_notify(this.#handle);
+    lib.symbols.zinc_notify(this.#liveHandle());
   }
 
   wait(timeoutMs = 1000): boolean {
-    return lib.symbols.zinc_wait(this.#handle, timeoutMs) === 0;
+    const code = lib.symbols.zinc_wait(this.#liveHandle(), timeoutMs);
+    if (code === -110) return false;
+    if (code !== 0) throw new Error(`zinc_wait failed: ${code}`);
+    return true;
+  }
+
+  tryWait(): boolean {
+    const code = lib.symbols.zinc_try_wait(this.#liveHandle());
+    if (code === -11) return false;
+    if (code !== 0) throw new Error(`zinc_try_wait failed: ${code}`);
+    return true;
+  }
+
+  #liveHandle() {
+    if (this.#handle === null) throw new Error("region is closed");
+    return this.#handle;
   }
 
   close(): void {
-    lib.symbols.zinc_close(this.#handle);
+    if (this.#handle !== null) {
+      lib.symbols.zinc_close(this.#handle);
+      this.#handle = null;
+    }
   }
 
   [Symbol.dispose](): void {

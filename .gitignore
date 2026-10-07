@@ -3,3 +3,13 @@ target/
 **/node_modules
 *.DS_Store
 *.rdb
+# CocoIndex Code (ccc)
+/.cocoindex_code/
+
+__pycache__/
+.pytest_cache/
+*.node
+adapters/node/index.js
+adapters/node/index.d.ts
+adapters/csharp/**/bin/
+adapters/csharp/**/obj/

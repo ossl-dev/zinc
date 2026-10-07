@@ -14,6 +14,7 @@ interface ZincLib extends Library {
     long zinc_capacity(Pointer handle);
     void zinc_close(Pointer handle);
     void zinc_notify(Pointer handle);
+    int zinc_try_wait(Pointer handle);
     int zinc_wait(Pointer handle, int timeoutMs);
     int zinc_version();
 }

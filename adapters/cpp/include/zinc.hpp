@@ -1,25 +1,30 @@
 #pragma once
-#include "../../include/zinc.h"
+#include "zinc.h"
 #include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <cstdint>
+#include <stdexcept>
 
 namespace zinc {
 
 class SharedRegion {
 public:
     static SharedRegion create(std::string_view name, std::size_t capacity) {
+        if (name.find('\0') != std::string_view::npos)
+            throw std::invalid_argument("name contains NUL");
         ZincHandle h{};
-        if (int e = zinc_create(name.data(), capacity, &h); e != 0)
+        if (int e = zinc_create(std::string(name).c_str(), capacity, &h); e != 0)
             throw std::system_error(-e, std::generic_category(), "zinc_create");
         return SharedRegion{h};
     }
 
     static SharedRegion open(std::string_view name) {
+        if (name.find('\0') != std::string_view::npos)
+            throw std::invalid_argument("name contains NUL");
         ZincHandle h{};
-        if (int e = zinc_open(name.data(), &h); e != 0)
+        if (int e = zinc_open(std::string(name).c_str(), &h); e != 0)
             throw std::system_error(-e, std::generic_category(), "zinc_open");
         return SharedRegion{h};
     }
@@ -43,11 +48,11 @@ public:
     ~SharedRegion() { close(); }
 
     [[nodiscard]] std::span<std::byte> bytes() {
-        return {static_cast<std::byte*>(zinc_ptr(h_)), zinc_capacity(h_)};
+        return {reinterpret_cast<std::byte*>(zinc_ptr(h_)), zinc_capacity(h_)};
     }
 
     [[nodiscard]] std::span<const std::byte> bytes() const {
-        return {static_cast<const std::byte*>(zinc_ptr(h_)), zinc_capacity(h_)};
+        return {reinterpret_cast<const std::byte*>(zinc_ptr(h_)), zinc_capacity(h_)};
     }
 
     [[nodiscard]] std::size_t capacity() const { return zinc_capacity(h_); }
@@ -55,7 +60,17 @@ public:
     void notify() { zinc_notify(h_); }
 
     bool wait(uint32_t timeout_ms = 1000) {
-        return zinc_wait(h_, timeout_ms) == 0;
+        int code = zinc_wait(h_, timeout_ms);
+        if (code == -110) return false;
+        if (code != 0) throw std::system_error(-code, std::generic_category(), "zinc_wait");
+        return true;
+    }
+
+    bool try_wait() {
+        int code = zinc_try_wait(h_);
+        if (code == -11) return false;
+        if (code != 0) throw std::system_error(-code, std::generic_category(), "zinc_try_wait");
+        return true;
     }
 
     void close() {
