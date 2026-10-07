@@ -75,3 +75,7 @@ npm publish
 | macOS | ✅ |
 
 > Windows is not supported. Zinc requires POSIX `shm_open` + `mmap`.
+
+`asBuffer()` retains the shared mapping until the buffer is collected, even if the `ZincRegion` object is collected first. `tryWait()` consumes a pending notification without blocking. `wait()` returns false only on timeout and throws on other failures.
+
+Run `npm run build && npm test` for the integration and buffer lifetime tests.

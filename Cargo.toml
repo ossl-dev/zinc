@@ -1,5 +1,6 @@
 [workspace]
 members = ["core"]
+exclude = ["adapters/node"]
 resolver = "2"
 
 [profile.release]

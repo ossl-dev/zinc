@@ -102,3 +102,7 @@ twine upload dist/*
 | macOS | ✅ |
 
 > Windows is not supported. Zinc requires POSIX `shm_open` + `mmap`.
+
+`close()` prevents new operations on the handle. Exported memoryviews and NumPy arrays retain the mapping until they are released, so they remain valid after close. If a creator still has exported views, its name also remains until those views are released.
+
+`try_wait()` consumes a pending notification without blocking. `wait()` returns false on timeout and raises `OSError` for other failures. Structured NumPy dtypes work through `as_numpy(dtype=...)`.

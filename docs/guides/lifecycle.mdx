@@ -33,7 +33,7 @@ After the creator closes:
 - Existing readers keep their mappings and can still access the data.
 - A new creator can reuse the name for a separate region. Old readers continue to see the old region.
 
-Raw pointers and borrowed views must not be used after their owning mapping closes. Node buffers retain their mapping until garbage collection.
+Raw pointers and borrowed views must not be used after their owning mapping closes. Node buffers and Python views retain their mappings until garbage collection. Python `close()` releases the handle's ownership, but exported views can defer name removal.
 
 ## Shutdown and crashes
 

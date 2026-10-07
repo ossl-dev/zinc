@@ -133,7 +133,7 @@ Each adapter should feel native, not like an FFI wrapper.
 ### Python
 
 - [ ] Async notify/wait: `await region.wait_async()` using `asyncio` + thread pool
-- [ ] NumPy structured dtype support: `region.as_numpy(dtype=np.dtype([('x', 'f4'), ('y', 'f4')]))`
+- [x] NumPy structured dtype support: `region.as_numpy(dtype=np.dtype([('x', 'f4'), ('y', 'f4')]))`
 - [ ] Type stubs (`.pyi` files)
 
 ### Node
@@ -198,7 +198,7 @@ Not yet triaged into phases. Fix anytime.
 - [ ] `AlreadyExists` on stale regions: creator crashed, old name still in `/dev/shm`, new create fails. Need `create_or_replace` mode.
 - [ ] Name length limit not documented or enforced, POSIX `shm_open` names have system-dependent limits (usually 255 chars)
 - [ ] 32-bit overflow in `zinc_version()`: major version in upper 16 bits of u32 is fine for now, but worth noting
-- [ ] Node adapter: `asBuffer` lifetime, if region closes, buffer is dangling. Need guard/handle pattern.
+- [x] Node adapter: retain the region while `asBuffer` views are alive
 - [ ] Thread safety of `RegionHeader` fields: some are `AtomicU32`, some are plain `u64`. `created_at` read is not atomic.
 - [ ] `fnv1a` hash collision risk for name dedup, fine for now, document the tradeoff
 - [ ] No `O_SYNC` or `msync` call, data durability guarantee is unclear. Document or add `flush()` method.

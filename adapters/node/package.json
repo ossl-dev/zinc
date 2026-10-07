@@ -12,6 +12,7 @@
   },
   "scripts": {
     "build": "napi build --release",
-    "artifacts": "napi artifacts"
+    "artifacts": "napi artifacts",
+    "test": "node --expose-gc --test tests/*.test.cjs"
   }
 }
