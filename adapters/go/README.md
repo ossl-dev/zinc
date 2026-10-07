@@ -1,96 +1,26 @@
-# Zinc — Go Adapter
+# Zinc Go adapter
 
-Zero-copy shared memory for Go via [cgo](https://pkg.go.dev/cmd/cgo).
+cgo links against the core in target/release. Linux and macOS are supported.
 
-## Install
-
-```bash
-go get github.com/ossl/zinc/adapters/go
-```
-
-Requires `libzinc_core.dylib` / `libzinc_core.so` built and findable in `LD_LIBRARY_PATH` / `DYLD_LIBRARY_PATH`.
-
-### Building from source
+Registry publishing is pending. From the repository root:
 
 ```bash
-cargo build --release --manifest-path core/Cargo.toml
-go build ./adapters/go/...
+cargo build --release -p zinc-core --lib
+export LD_LIBRARY_PATH="$PWD/target/release:${LD_LIBRARY_PATH:-}"
+export DYLD_LIBRARY_PATH="$PWD/target/release:${DYLD_LIBRARY_PATH:-}"
+cd adapters/go
+go vet ./...
+go test ./...
 ```
 
-## Usage
+Import from your source checkout:
 
 ```go
-package main
-
-import (
-    "fmt"
-    "unsafe"
-    "github.com/ossl/zinc/adapters/go"
-)
-
-func main() {
-    // Process A — create
-    r, err := zinc.Create("/my-data", 4096)
-    if err != nil { panic(err) }
-    defer r.Close()
-
-    data := r.Bytes()
-    *(*float32)(unsafe.Pointer(&data[0])) = 42.0
-    r.Notify()
-}
+import "zinc"
 ```
 
-```go
-// Process B — open
-r, err := zinc.Open("/my-data")
-if err != nil { panic(err) }
-defer r.Close()
+For another module, add `replace zinc => /path/to/zinc/adapters/go` to go.mod and run `go get zinc`. `Bytes()` borrows the mapping: do not close while using the slice or another region operation. `Close()` is idempotent for sequential use. `Wait()` returns false on failure; `TryWait()` checks without blocking.
 
-r.Wait(5000)
-data := r.Bytes()
-val := *(*float32)(unsafe.Pointer(&data[0]))
-fmt.Println(val) // 42.0
-```
+Names contain ASCII letters, digits, underscores, and hyphens; do not add a leading slash. Capacity must be positive and a multiple of the system page size. Keep the creator alive until other processes open the region. Closing the creator unlinks the name while existing mappings remain valid.
 
-## API
-
-### `zinc.Create(name string, capacity uint) (*SharedRegion, error)`
-Create a new shared region.
-
-### `zinc.Open(name string) (*SharedRegion, error)`
-Open an existing shared region.
-
-### `region.Bytes() []byte`
-Zero-copy Go slice backed by shared memory.
-
-### `region.Notify()`
-Signal all waiters.
-
-### `region.Wait(timeoutMs uint32) bool`
-Block until notified.
-
-### `region.Close()`
-Release the handle.
-
-## Testing
-
-```bash
-go test ./adapters/go/...
-```
-
-## Publish
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-# Go proxy picks up the tag automatically
-```
-
-## Platform support
-
-| OS | Status |
-|---|---|
-| Linux | ✅ |
-| macOS | ✅ |
-
-> Windows is not supported. Zinc requires POSIX `shm_open` + `mmap`.
+See the [API reference](../../docs/adapters/go.mdx), [notification rules](../../docs/guides/notify-wait.mdx), and [source installation guide](../../docs/getting-started/installation.mdx).

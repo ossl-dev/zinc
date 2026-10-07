@@ -1,175 +1,76 @@
 ---
-title: "Performance and Benchmarks"
-description: "Latency, throughput, and comparison to alternatives"
+title: "Performance and benchmarks"
+description: "What the benchmarks measure and how to run them"
 ---
 
-Zinc's fundamental advantage is that there is no data transfer. Two processes reading and writing the same physical memory incur no serialization cost, no copy cost, and no kernel round-trip for the data itself. The only kernel interactions are the initial `mmap` setup and the optional `futex` call in `notify`/`wait`.
+Processes mapping the same region access the same memory pages. Zinc adds no serialization or data copy to that access. Reads and writes still cost memory bandwidth, page faults, and cache coherence; notification adds synchronization costs.
 
-## Notify/wait latency
-
-The notify/wait roundtrip measures the time from a writer calling `notify()` to a reader returning from `wait()`. This is the synchronization overhead, not the data access cost.
-
-| Platform | P50 | P99 | Measurement method |
-|----------|-----|-----|-------------------|
-| Linux (futex) | < 1 microsecond | < 3 microseconds | `criterion` on AMD EPYC |
-| macOS (spin loop) | ~2 microseconds | ~10 microseconds | `criterion` on Apple M2 Pro |
-
-The Linux futex path is near the hardware minimum: a single syscall in the wake path, and another syscall in the waiter path when the kernel unparks it. The macOS spin loop is slower because the waiting thread must poll.
-
-**Target.** Under 5 microseconds for notify/wait roundtrip on Linux. Current measurements confirm it.
-
-## Data access throughput
-
-Once the region is mapped, data access is memory-bound, not Zinc-bound. Reading or writing the shared region is equivalent to reading or writing any other memory-mapped region in the process.
-
-| Operation | 100MB region | 1GB region |
-|-----------|--------------|------------|
-| Sequential read | ~200 microseconds | ~2 milliseconds |
-| Sequential write | ~200 microseconds | ~2 milliseconds |
-| Random read (4KB stride) | ~5 milliseconds | ~50 milliseconds |
-
-These numbers depend on RAM bandwidth and CPU cache behavior. A system with 50GB/s memory bandwidth will read a 100MB region in approximately 2 milliseconds (100 MB / 50 GB/s = 2 ms). The throughput is limited by the memory subsystem, not by Zinc.
-
-## Zero-copy verification
-
-To verify that no copying occurs, compare pointer addresses across adapters:
-
-```rust
-// Rust: get the mmap base address
-let region = SharedRegion::create("test", 4096)?;
-let rust_ptr = region.as_ptr() as usize;
-println!("Rust data ptr: 0x{rust_ptr:x}");
-```
-
-```python
-# Python: get the buffer address
-region = SharedRegion.open("test")
-buf = region.as_buffer()
-buf_ptr = id(buf)  # Python object address
-# Use ctypes to get the actual pointer
-import ctypes
-addr = ctypes.addressof(ctypes.c_char.from_buffer(buf))
-print(f"Python buf addr: 0x{addr:x}")
-```
-
-```go
-// Go: get the slice data pointer
-region, _ := zinc.Open("test")
-data := region.Bytes()
-go_ptr := unsafe.Pointer(&data[0])
-fmt.Printf("Go data ptr: %v\n", go_ptr)
-```
-
-The addresses should match (or differ by a constant offset if the header is included in one calculation and excluded in another).
-
-## Comparison to alternatives
-
-**Unix sockets.** For a 100MB transfer over a Unix domain socket, the data is copied twice (from sender to kernel, from kernel to receiver). Throughput on a typical system is roughly 1-2 GB/s. Zinc eliminates both copies. For small messages under 1KB, sockets can be faster because there is no setup overhead.
-
-**gRPC (localhost).** gRPC serializes data to protobuf, copies through HTTP/2 framing, sends over a TCP socket, and deserializes. For a 100MB tensor, serialization alone takes 10-30 milliseconds. Zinc's zero-copy path takes 0 milliseconds because no bytes are moved.
-
-**Redis.** Redis is a network service. Data goes through the client library, through the kernel's network stack, into Redis's memory, and back. Useful for data that needs to be shared between machines. For same-machine sharing, the overhead is unnecessary.
-
-**mmap files.** Raw `shm_open` + `mmap` + `ftruncate` uses the exact same kernel primitives as Zinc. Throughput is identical, both are memory-bandwidth-bound. Any measurement variance between them is OS scheduling noise (CPU frequency scaling, thread placement), not a code-path difference. The difference is lifecycle: Zinc handles creation, naming, reference counting, and cleanup automatically. With raw mmap, you must manage file creation, sizing, and cleanup yourself. Zinc's regions are anonymous (backed by `shm_open`, not a visible file) and self-cleaning.
-
-**Plasma (Ray).** Deprecated. Formerly a shared memory object store with a client-server architecture. Zinc has no server, memory is shared directly between processes with no intermediary.
-
-Run the [throughput examples](#throughput-examples) below to measure each alternative against Zinc on your hardware.
-
-## Benchmark methodology
-
-Each example uses the same statistically rigorous approach to isolate true throughput from system noise.
-
-### Min-time (max GB/s) across multiple samples
-
-Noise sources, CPU frequency scaling, thermal throttling, OS scheduler interrupts, TLB pressure, **only ever slow things down, never speed them up**. The fastest observed run is therefore the run with the least noise, closest to the true hardware limit.
-
-$$T_{\text{best}} = \min(T_1, T_2, \ldots, T_n)$$
-
-$$\text{Throughput} = \frac{\text{payload bytes} \times \text{iterations}}{T_{\text{best}}}$$
-
-This is the industry standard, used by [Criterion.rs](https://github.com/bheisler/criterion.rs) and [Google Benchmark](https://github.com/google/benchmark). Taking the **average** would encode noise, a single context-switch spike inflates the mean.
-
-### Alternating order
-
-At each payload size, 5 independent samples are collected. Odd-numbered samples run Zinc first, then the alternative. Even-numbered samples run the alternative first, then Zinc. This cancels first-run bias (cold pages, cold kernel caches).
-
-### Warmup phase
-
-Before each timed measurement, 10% of the full iteration count is run as unmeasured warmup. This faults in physical pages, primes the TLB, and stabilizes CPU frequency before timing begins.
-
-### Page-aligned data
-
-Zinc reserves the full first page of the shared memory region for the header. The data region (`as_ptr()`) starts at a page boundary:
-
-$$\text{data\_offset} = \text{page\_size} \quad \text{(not sizeof(RegionHeader))}$$
-
-Page-aligned data lets CPU write-combining buffers and L1 streaming prefetch operate at full bandwidth. Without this, `memset` crossing a page boundary on every write cycle incurs a measurable throughput penalty at small payloads.
-
-## Throughput examples
-
-Standalone comparison benchmarks live in `core/examples/`. Each measures Zinc against an alternative for the same workload and prints a throughput table.
-
-### Zinc vs Unix sockets
+## Criterion benchmarks
 
 ```bash
-cargo run --release --example unix_sockets --manifest-path core/Cargo.toml
+cargo bench -p zinc-core --bench latency
+cargo bench -p zinc-core --bench throughput
+cargo bench -p zinc-core --bench ring
 ```
 
-Measures notify/wait latency and sequential transfer throughput for Zinc shared memory vs Unix domain socket pairs. Zinc is memory-bandwidth-bound (~60 GB/s); sockets are kernel-copy-bound (~1.4 GB/s).
+| Benchmark | Work measured |
+|-----------|---------------|
+| `create_open` | Create and drop, or open and drop, a one-page region |
+| `latency/thread_ping_pong` | A notification request and reply between two threads using separate regions |
+| `write` | Fill a mapped buffer and read back its first byte |
+| `notification_fast_path/same_thread` | Notify and consume the pending change on the same thread |
+| `ring/push_pop` | Push and pop one queue value |
+| `ring/contention` | 4096 values sent by contending producers to one consumer, including thread startup |
+
+The Linux notify/wait roundtrip target is under 5 microseconds. There are no checked-in results from the corrected ping-pong benchmark confirming that target. Measure it on the hardware and scheduling setup you plan to use. Criterion's timing estimates are not per-message P50/P99 latency histograms.
+
+On macOS, the sleep fallback trades idle CPU use for scheduler-dependent wake latency. Its results should be measured separately from Linux futex results.
+
+## Verify shared access
+
+The Rust/Python interop test creates a region in a Rust process, writes known bytes, and reads them from Python while the creator remains alive:
+
+```bash
+cargo build --release -p zinc-core --lib --example interop
+python3 -m pytest adapters/python/tests -q
+```
+
+Virtual pointer addresses do not need to match across processes. Each process can map the same backing pages at a different virtual address. Shared mutations, rather than equal addresses, demonstrate that the views refer to the same storage.
+
+## Comparison examples
+
+```bash
+cargo run --release -p zinc-core --example unix_sockets
+cargo run --release -p zinc-core --example mmap
+cargo run --release -p zinc-core --example grpc
+cargo run --release -p zinc-core --example redis
+```
+
+These programs compare selected data-access and transport workloads. They retain the fastest of five samples and alternate execution order. Warmup touches mapped pages before timing. Treat the fastest sample as a best observed run, not a guarantee or a tail-latency measurement.
+
+The shared-memory write loops fill the buffer and inspect one byte through another mapping in the same process. They do not measure a complete payload read in a second process. Socket and Redis paths move payload bytes, so their throughput numbers represent different work.
+
+The examples report a warmed-up thread notification roundtrip. The raw mmap example uses the core notification functions to compare the same wait protocol.
+
+The `grpc` example encodes protobuf over length-prefixed TCP. It does not implement HTTP/2, gRPC framing, or a gRPC client/server. The `redis` example needs a server on `127.0.0.1:6379`.
+
+The first page contains the header and padding; usable data starts at the next page boundary. Region creation and mapping costs are excluded from the timed write loops.
+
+## Recorded example output
+
+These images are historical runs on the MacBook Pro described by the original benchmark documentation. They predate the corrected Criterion latency benchmark and should not be used to claim its current latency.
 
 <Frame>
-  <img src="/images/example-benchmarks/unix_sockets.png" alt="Zinc vs Unix sockets benchmark output" />
+  <img src="/images/example-benchmarks/unix_sockets.png" alt="Historical Zinc and Unix socket example output" />
 </Frame>
-
-### Zinc vs raw mmap
-
-```bash
-cargo run --release --example mmap --manifest-path core/Cargo.toml
-```
-
-Compares Zinc against raw `shm_open` + `mmap` + `ftruncate` with manual futex synchronization. Throughput is identical, both use the same kernel primitives. Any deviation from ratio 1.00 is OS scheduling noise, not a Zinc overhead. The raw path requires explicit lifecycle management: `shm_open`, `ftruncate`, `mmap`, `shm_unlink`, and manual notify/wait via `futex`. Zinc adds automatic creation, reference counting, and cleanup on drop.
-
 <Frame>
-  <img src="/images/example-benchmarks/mmap.png" alt="Zinc vs raw mmap benchmark output" />
+  <img src="/images/example-benchmarks/mmap.png" alt="Historical Zinc and raw mmap example output" />
 </Frame>
-
-### Zinc vs gRPC
-
-```bash
-cargo run --release --example grpc --manifest-path core/Cargo.toml
-```
-
-Compares Zinc against protobuf-serialized messages over TCP (length-prefixed framing, same wire format as gRPC). Demonstrates serialization cost: Zinc's zero-copy path takes 0 ms to "transfer" bytes; the gRPC path pays protobuf encode/decode and kernel TCP stack overhead.
-
 <Frame>
-  <img src="/images/example-benchmarks/grpc.png" alt="Zinc vs gRPC benchmark output" />
+  <img src="/images/example-benchmarks/grpc.png" alt="Historical Zinc and protobuf-over-TCP example output" />
 </Frame>
-
-### Zinc vs Redis
-
-```bash
-cargo run --release --example redis --manifest-path core/Cargo.toml
-```
-
-Compares Zinc against Redis SET/GET on localhost. Requires Redis running on `127.0.0.1:6379`. Shows network-stack overhead even on loopback, data goes through client library → kernel TCP → Redis process → and back.
-
 <Frame>
-  <img src="/images/example-benchmarks/redis.png" alt="Zinc vs Redis benchmark output" />
+  <img src="/images/example-benchmarks/redis.png" alt="Historical Zinc and Redis example output" />
 </Frame>
 
-<Info>
-  Results shown above were measured on a MacBook Pro with Apple M2 Pro chip, 16 GB RAM, and macOS Tahoe 26.5. Performance will vary across platforms, see the benchmark methodology section for details on measurement approach.
-</Info>
-
-## Benchmarks
-
-Benchmarks are not yet available. They will live in `core/benches/` and use `criterion` for statistical measurement. Once added, they'll be run with:
-
-```bash
-cargo bench --manifest-path core/Cargo.toml
-```
-
-## Allocation-free hot path
-
-The `zinc_ptr`, `zinc_capacity`, `zinc_notify`, and `zinc_wait` functions perform no heap allocation. The hot path is lock-free and allocation-free. We verified this with `dhat` (a heap profiling tool). Zero allocations in these functions across 1 million iterations.
+The pointer, capacity, notify, and wait paths contain no heap allocation in Zinc's core implementation. Create and open allocate handles and make mapping syscalls. No heap-profiler results are checked in.

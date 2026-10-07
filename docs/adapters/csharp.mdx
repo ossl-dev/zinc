@@ -3,15 +3,15 @@ title: "C# Adapter"
 description: "Use Zinc from C# with P/Invoke"
 ---
 
-The C# adapter uses P/Invoke (Platform Invocation Services) to call the Zinc C ABI. It provides a safe `Span<byte>` wrapper over the shared memory mapping.
+The C# adapter uses P/Invoke (Platform Invocation Services) to call the Zinc C ABI. It exposes a `Span<byte>` over the shared mapping. Keep the region open while using that span. The source targets .NET 8.
 
 ## Installation
 
-```bash
-dotnet add package Zinc
-```
+Build the core from a [source checkout](/getting-started/installation), then set up the adapter:
 
-Requires .NET 6 or later.
+```bash
+dotnet add YourApp.csproj reference adapters/csharp/Zinc.csproj
+```
 
 ## SharedRegion
 
@@ -22,7 +22,7 @@ using Zinc;
 ### Create
 
 ```csharp
-var region = SharedRegion.Create("my-data", (nuint)4096);
+var region = SharedRegion.Create("my-data", (nuint)16384);
 ```
 
 Creates a new region. Throws `InvalidOperationException` on failure.
@@ -75,25 +75,21 @@ using (var region = SharedRegion.Open("my-data")) {
 ## Complete example
 
 ```csharp
+using System;
 using Zinc;
 
-// Writer
-var writer = SharedRegion.Create("csharp-channel", (nuint)4096);
-var bytes = writer.Bytes();
-BitConverter.GetBytes(42.0).CopyTo(bytes);
+using var writer = SharedRegion.Create("csharp-channel", (nuint)16384);
+using var reader = SharedRegion.Open("csharp-channel");
+BitConverter.TryWriteBytes(writer.Bytes(), 42.0);
 writer.Notify();
-Thread.Sleep(2000);
-writer.Dispose();
-
-// Reader (separate process)
-var reader = SharedRegion.Open("csharp-channel");
 if (reader.Wait(3000)) {
-    var data = reader.Bytes();
-    double val = BitConverter.ToDouble(data);
-    Console.WriteLine($"read: {val}"); // 42.0
+    Console.WriteLine(BitConverter.ToDouble(reader.Bytes()));
 }
-reader.Dispose();
 ```
+
+This uses two handles in one process. For separate processes, keep the creator running until the reader finishes.
+
+`TryWait()` consumes a pending notification without blocking.
 
 ## P/Invoke details
 

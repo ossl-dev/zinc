@@ -7,22 +7,22 @@ The Deno adapter uses `Deno.dlopen` to load the Zinc shared library. Like the Bu
 
 ## Installation
 
-```bash
-deno add @ossl/zinc
-```
+Build the core from a [source checkout](/getting-started/installation), then set up the adapter:
 
-Requires Deno 1.33 or later with `--allow-ffi` and `--allow-read` permissions.
+```bash
+# Import ./adapters/deno/src/mod.ts with the adapters/deno/deno.json import map
+```
 
 ## SharedRegion
 
 ```typescript
-import { SharedRegion } from "@ossl/zinc";
+import { SharedRegion } from "./adapters/deno/src/mod.ts";
 ```
 
 ### create
 
 ```typescript
-const region = SharedRegion.create("my-data", 4096);
+const region = SharedRegion.create("my-data", 16384);
 ```
 
 Creates a new region. Throws on failure.
@@ -75,10 +75,10 @@ const buf = region.buffer();
 ## Complete example
 
 ```typescript
-import { SharedRegion } from "@ossl/zinc";
+import { SharedRegion } from "./adapters/deno/src/mod.ts";
 
 // Writer
-const w = SharedRegion.create("deno-channel", 4096);
+const w = SharedRegion.create("deno-channel", 16384);
 const buf = w.buffer();
 const view = new DataView(buf.buffer);
 view.setFloat64(0, 2.71828, true);
@@ -107,4 +107,6 @@ Without these, the import will fail with a permission error.
 
 ## FFI details
 
-The library path is resolved relative to the adapter's Deno module location. The suffix is determined from `Deno.build.os`: `.dylib` on macOS, `.so` on Linux. `windows` is not mapped, Zinc does not support Windows. Pointer values are represented as `Deno.PointerValue` (which is `number | null` on 32-bit and `bigint | null` on 64-bit).
+The loader resolves `target/release/libzinc_core.{so,dylib}` relative to the source checkout. Handles use Deno's opaque `PointerValue` objects. The adapter targets Deno 2 and requires `--unstable-ffi --allow-ffi --allow-read`.
+
+Keep the region open while any returned view is in use. `close()` is idempotent and later operations on the region throw. `tryWait()` consumes a pending notification without blocking. Timeouts must be integers between 0 and `2^32 - 1` milliseconds.

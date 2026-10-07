@@ -3,15 +3,15 @@ title: "Region Header Layout"
 description: "The 64-byte header at the start of every shared memory region"
 ---
 
-Every mapped Zinc region begins with a 64-byte header occupying one CPU cache line. The header is `#[repr(C, align(64))]` in Rust, meaning its layout is stable and exactly 64 bytes. The data area begins at offset 64.
+Every mapped Zinc region begins with a 64-byte header. The header is `#[repr(C, align(64))]` in Rust, meaning its layout is stable and exactly 64 bytes. The header occupies the start of the first page. Data begins at offset `page_size`, after the rest of that page's padding.
 
 ## Layout
 
 ```
 Offset  Size    Type          Field        Description
 ------  ------  ------------  -----------  -----------------------------------
-0       8       u64           magic        Magic number for corruption detection
-8       2       u16           version      Breaking-change guard (currently 1)
+0       8       AtomicU64     magic        Magic number for corruption detection
+8       2       u16           version      Breaking-change guard (currently 2)
 10      2       u16           flags        Reserved
 12      4       AtomicU32     notify_seq   Notification/futex signal counter
 16      8       u64           capacity     Usable bytes after header
@@ -23,17 +23,17 @@ Offset  Size    Type          Field        Description
 56      8       AtomicU64     ring_tail    Notification ring read position
 ```
 
-Total: 64 bytes. Not a single byte more.
+Total: 64 bytes.
 
 ## Fields
 
 ### magic (offset 0, 8 bytes)
 
-Fixed to `0x5A494E435F524547`, which spells `"ZINC_REG"` in ASCII. Checked on open to detect corrupted regions or segments that were overwritten by non-Zinc code. Any process could theoretically write a valid magic number at this offset; this field is a sanity check, not a security boundary.
+Published with a release store after initialization and acquired on open. Fixed to `0x5A494E435F524547`, which spells `"ZINC_REG"` in ASCII. Checked on open to detect corrupted regions or segments that were overwritten by non-Zinc code. Any process could theoretically write a valid magic number at this offset; this field is a sanity check, not a security boundary.
 
 ### version (offset 8, 2 bytes)
 
-Currently 1. Incremented when the header layout changes in a backward-incompatible way. When a region is opened, the opener's library version must match the stored version. A mismatch returns `CorruptedRegion`.
+Currently 2. Incremented when the header layout changes in a backward-incompatible way. When a region is opened, the opener's library version must match the stored version. A mismatch returns `CorruptedRegion`.
 
 ### flags (offset 10, 2 bytes)
 
@@ -45,11 +45,11 @@ The atomic counter used by `notify()` and `wait()`. Incremented on every `notify
 
 ### capacity (offset 16, 8 bytes)
 
-The number of usable bytes in the data area. Set at creation time and immutable for the lifetime of the region. This is the total mapping size minus 64 bytes.
+The number of usable bytes in the data area. Set at creation time and immutable for the lifetime of the region. This is the total mapping size minus one system page.
 
 ### ref_count (offset 24, 4 bytes)
 
-Tracks the number of open handles on this region. Incremented on `zinc_open`, decremented on `zinc_close`. When the creator's handle closes and the count reaches zero, the region is unlinked.
+Tracks the number of open handles on this region. Incremented on `zinc_open`, decremented on `zinc_close`. The creator unlinks the name when it closes, regardless of this count. Process crashes can leave an inaccurate count.
 
 ### owner_pid (offset 28, 4 bytes)
 
@@ -61,15 +61,15 @@ Unix timestamp in nanoseconds at the time of creation. Set from `SystemTime::now
 
 ### name_hash (offset 40, 8 bytes)
 
-FNV-1a hash of the region name. Stored to allow quick equality checks without string comparison across processes. Not used by the current implementation but reserved for future use.
+FNV-1a hash of the region name. Stored for diagnostics and possible future use. Name lookup uses the full POSIX name, so hash collisions do not merge regions. The hash is not an authentication or integrity check.
 
 ### ring_head / ring_tail (offset 48 / 56, 8 bytes each)
 
-The head and tail cursors of the internal lock-free notification ring. This ring is used for lightweight event delivery (sequence numbers, not data). The ring has 256 slots and uses a standard MPSC (multi-producer, single-consumer) protocol on these atomic counters.
+Reserved atomic cursors for caller-managed ring storage. `SharedRegion` does not initialize or use a ring in its data area. `notify` and `wait` use only `notify_seq`.
 
 ## Stability guarantees
 
-The header layout is versioned. Version 1 will never change. If a future version needs to add fields, it can reuse the reserved `flags` field or extend into the data area with a new version number. The `magic` and `version` fields are always at offset 0 and 8 for forward compatibility.
+The header layout is versioned. The current header version is 2. If a future version needs to add fields, it can reuse the reserved `flags` field or extend into the data area with a new version number. The `magic` and `version` fields are always at offset 0 and 8 for forward compatibility.
 
 ## Access from user code
 
@@ -77,10 +77,11 @@ There is no public API to read the header fields from adapter code. The header i
 
 ```rust
 // Rust: read the header directly (unsafe, for debugging only)
+let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize };
 let hdr: &RegionHeader = unsafe {
-    &*(region.as_ptr().sub(64) as *const RegionHeader)
+    &*(region.as_ptr().sub(page) as *const RegionHeader)
 };
-println!("magic: 0x{:x}, owner_pid: {}", hdr.magic, hdr.owner_pid);
+println!("magic: 0x{:x}, owner_pid: {}", hdr.magic.load(std::sync::atomic::Ordering::Acquire), hdr.owner_pid.load(std::sync::atomic::Ordering::Relaxed));
 ```
 
-This is not recommended in production code. The header format is not part of the public API commitment and may change with version bumps.
+This is not recommended in production code. Changes to this layout require a header version bump.

@@ -7,22 +7,24 @@ The Node.js adapter uses napi-rs, which compiles a Rust crate into a `.node` nat
 
 ## Installation
 
-```bash
-npm install @ossl/zinc
-```
+Build the core from a [source checkout](/getting-started/installation), then set up the adapter:
 
-Requires Node.js 18 or later. The native addon is built for your platform at install time.
+```bash
+cd adapters/node
+npm ci
+npm run build
+```
 
 ## ZincRegion
 
 ```typescript
-import { ZincRegion } from '@ossl/zinc';
+import { ZincRegion } from './adapters/node/index.js';
 ```
 
 ### create
 
 ```typescript
-const region = ZincRegion.create("my-data", 4096);
+const region = ZincRegion.create("my-data", 16384);
 ```
 
 Creates a new region. Throws if the name already exists or the size is invalid.
@@ -64,19 +66,17 @@ Returns `true` if data was available, `false` on timeout.
 ## Complete example
 
 ```typescript
-import { ZincRegion } from '@ossl/zinc';
+import { ZincRegion } from './adapters/node/index.js';
 
 // Writer
-const writer = ZincRegion.create("channel", 4096);
+const writer = ZincRegion.create("channel", 16384);
 const buf = writer.asBuffer();
 const view = new Float64Array(buf.buffer, buf.byteOffset, buf.length / 8);
 
 view[0] = 42.0;
 writer.notify();
 
-setTimeout(() => {
-    writer.close();
-}, 5000);
+// Keep writer and its buffer alive until readers finish.
 
 // Reader (separate process)
 const reader = ZincRegion.open("channel");
@@ -86,7 +86,6 @@ const view2 = new Float64Array(buf2.buffer, buf2.byteOffset, buf2.length / 8);
 if (reader.wait(3000)) {
     console.log(view2[0]); // 42.0
 }
-reader.close();
 ```
 
 ## TypeScript
@@ -95,4 +94,6 @@ The package includes TypeScript declarations. The `ZincRegion` class and all its
 
 ## napi-rs internals
 
-The `asBuffer` method uses `napi::Env::create_buffer_with_borrowed_data`, which creates a `Buffer` from an externally-owned pointer without copying. The finalizer argument is a no-op because the mmap lifetime is managed by `ZincRegion`, not by the buffer's garbage collection. The buffer must not be used after the region is closed.
+`asBuffer()` uses napi-rs to wrap the mapping without copying. Its finalizer retains an `Arc<SharedRegion>` until the buffer is collected. A buffer remains valid after its region object is collected. Node has no explicit `close()` method; the creator unlinks when both its region object and retained buffers have been released.
+
+`tryWait()` consumes a pending notification without blocking. `wait()` returns false on timeout and throws on other failures. Capacities and timeouts must be unsigned 32-bit integers; fractional, negative, and out-of-range values are rejected.

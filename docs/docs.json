@@ -81,7 +81,7 @@
   },
   "footer": {
     "socials": {
-      "github": "https://github.com/Open-Vanguard/zinc"
+      "github": "https://github.com/ossl-dev/zinc"
     }
   },
   "description": "Universal Shared Memory",
@@ -108,7 +108,7 @@
   "navbar": {
     "links": [
       {
-        "href": "https://github.com/Open-Vanguard/zinc",
+        "href": "https://github.com/ossl-dev/zinc",
         "label": "GitHub"
       }
     ]

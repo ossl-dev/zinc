@@ -7,7 +7,7 @@ The Java adapter uses JNA (Java Native Access) to call the Zinc C ABI. JNA needs
 
 ## Installation
 
-Add the dependency to your `pom.xml`:
+Build the core from a [source checkout](/getting-started/installation), then run `mvn install` in `adapters/java`. This installs the adapter into your local Maven repository; Maven Central publishing is pending. The source targets Java 17 or later. Add the dependency to your application:
 
 ```xml
 <dependency>
@@ -28,7 +28,7 @@ import dev.zinc.SharedRegion;
 ### create
 
 ```java
-var region = SharedRegion.create("my-data", 4096L);
+var region = SharedRegion.create("my-data", 16384L);
 ```
 
 Creates a new region. Throws `RuntimeException` on failure.
@@ -54,16 +54,16 @@ float val = buf.getFloat(0);
 
 The buffer is direct (backed by native memory). It is writable by default.
 
-### notify
+### signal
 
 ```java
-region.notify();
+region.signal();
 ```
 
-### wait
+### waitForNotification
 
 ```java
-boolean ok = region.wait(1000);
+boolean ok = region.waitForNotification(1000);
 ```
 
 Returns `true` on notification, `false` on timeout.
@@ -89,26 +89,22 @@ try (var region = SharedRegion.open("my-data")) {
 import dev.zinc.SharedRegion;
 
 public class Example {
-    public static void main(String[] args) throws Exception {
-        // Writer
-        var writer = SharedRegion.create("java-channel", 4096L);
-        var buf = writer.buffer();
-        buf.putDouble(0, 3.14159);
-        writer.notify();
-        Thread.sleep(2000);
-        writer.close();
-
-        // Reader (run in separate JVM)
-        var reader = SharedRegion.open("java-channel");
-        if (reader.wait(3000)) {
-            var data = reader.buffer();
-            double val = data.getDouble(0);
-            System.out.println("read: " + val);
+    public static void main(String[] args) {
+        try (var writer = SharedRegion.create("java-channel", 16384);
+             var reader = SharedRegion.open("java-channel")) {
+            writer.buffer().putDouble(0, 3.14159);
+            writer.signal();
+            if (reader.waitForNotification(3000)) {
+                System.out.println(reader.buffer().getDouble(0));
+            }
         }
-        reader.close();
     }
 }
 ```
+
+This uses two handles in one JVM. For separate JVMs, keep the creator running until the reader finishes.
+
+`tryWait()` consumes a pending notification without blocking.
 
 ## JNA internals
 
@@ -128,6 +124,6 @@ interface ZincLib extends Library {
 }
 ```
 
-JNA loads `libzinc_core.{so,dylib,dll}` through its platform-native library loading mechanism. Ensure the library is on `java.library.path` or use `Native.load` with an absolute path.
+JNA loads `libzinc_core.{so,dylib}` through its platform-native library loading mechanism. Ensure the library is on `java.library.path` or use `Native.load` with an absolute path.
 
 The `Pointer.getByteBuffer(offset, length)` method creates a direct `ByteBuffer` wrapping the native memory. The JVM garbage collector does not manage this buffer. It is valid only as long as the region handle is open.

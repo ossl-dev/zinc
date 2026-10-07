@@ -1,122 +1,55 @@
 ---
 title: "Installation"
-description: "Build and install Zinc for your platform and language"
+description: "Build Zinc and its language adapters from source"
 ---
 
-Zinc ships as a shared library (`libzinc_core`) with per-language adapter packages. Build the core, then install the adapter for your language.
-
-<Warning>Windows is not supported. Zinc uses POSIX shared memory (`shm_open` + `mmap`). There are no plans to add Windows support.</Warning>
-
-## Prerequisites
-
-- Rust 1.82 or later
-- A C compiler toolchain (Xcode on macOS, build-essential on Linux)
-- For adapter packages: the corresponding language runtime
+Registry publishing is still on the [roadmap](https://github.com/ossl-dev/zinc/blob/main/ROADMAP.md). Use a repository checkout for the core and adapters.
 
 ## Build the core
 
-The core library is a Rust crate at the `core/` directory. It compiles to a `cdylib` that every language adapter loads at runtime.
+Install Rust 1.85 or later and a C compiler toolchain. The core supports Linux and macOS.
 
 ```bash
 git clone https://github.com/ossl-dev/zinc
 cd zinc
-cargo build --release --manifest-path core/Cargo.toml
+cargo build --release -p zinc-core --lib --locked
 ```
 
-The output appears at:
+The Cargo workspace writes `target/release/libzinc_core.so` on Linux or `target/release/libzinc_core.dylib` on macOS. The build generates `include/zinc.h` from the Rust C ABI declarations.
 
-- Linux: `core/target/release/libzinc_core.so`
-- macOS: `core/target/release/libzinc_core.dylib`
+## Build an adapter
 
-The build also generates `include/zinc.h` via cbindgen. This header is the C ABI contract. All adapters derive their FFI bindings from it.
+Run these commands from the repository root:
 
-## By language
+| Language | Source setup |
+|----------|--------------|
+| Rust | `cargo add zinc-core --path /path/to/zinc/core` |
+| Python | `python3 -m pip install -e 'adapters/python[numpy]'` |
+| Node.js | `cd adapters/node && npm ci && npm run build` |
+| Bun | Import `adapters/bun/src/index.ts` in your Bun program |
+| Deno | Import `adapters/deno/src/mod.ts`; use `adapters/deno/deno.json` for its import map |
+| Go | Use a local `replace zinc => /path/to/zinc/adapters/go` in your module, then `go get zinc` |
+| C++ | `cmake -S adapters/cpp -B target/cpp-tests && cmake --build target/cpp-tests` |
+| Java | `cd adapters/java && mvn install` to install the jar in your local Maven repository |
+| C# | Add a project reference to `adapters/csharp/Zinc.csproj` |
 
-<CodeGroup>
-  ```bash Rust
-  # Add zinc-core as a dependency
-  cargo add zinc-core --path /path/to/zinc/core
+See the adapter references for runtime requirements and imports. Node builds its core into the native addon. Python, Bun, and Deno currently resolve the shared library relative to their source checkout. Moving those adapters elsewhere requires changing their loader paths.
 
-  # Or from crates.io (once published)
-  cargo add zinc-core
-  ```
-
-  ```bash Python
-  pip install zinc-shm
-
-  # Or install from source
-  cd adapters/python
-  pip install -e .
-  ```
-
-  ```bash Go
-  go get github.com/ossl/zinc/adapters/go
-
-  # Or use a local path
-  # In go.mod: replace zinc => ./adapters/go
-  ```
-
-  ```bash Node.js
-  npm install @ossl/zinc
-  ```
-
-  ```bash Bun
-  bun add @ossl/zinc-bun
-  ```
-
-  ```bash Deno
-  deno add @ossl/zinc
-  ```
-
-  ```bash C++
-  # Header-only. Copy include/zinc.hpp into your project.
-  # Link against libzinc_core at build time.
-  ```
-
-  ```xml Java
-  <!-- Maven Central (pending) -->
-  <dependency>
-    <groupId>dev.zinc</groupId>
-    <artifactId>zinc-java</artifactId>
-    <version>0.1.0</version>
-  </dependency>
-  ```
-
-  ```bash C#
-  dotnet add package Zinc
-  ```
-</CodeGroup>
-
-## Library path
-
-All adapters expect `libzinc_core.{so,dylib}` on the library search path. The easiest approach is to place the compiled library in a standard location:
-
-<CodeGroup>
-  ```bash Linux
-  sudo cp core/target/release/libzinc_core.so /usr/local/lib/
-  sudo ldconfig
-  ```
-
-  ```bash macOS
-  cp core/target/release/libzinc_core.dylib /usr/local/lib/
-  ```
-</CodeGroup>
-
-Alternatively, set the library path via `LD_LIBRARY_PATH` (Linux) or `DYLD_LIBRARY_PATH` (macOS).
-
-## Platform notes
-
-- **Linux** requires glibc 2.17 or later. The notify/wait backend uses the `futex` syscall.
-- **macOS** uses an adaptive spin-loop for wait (the `ulock` API is private on Darwin).
-
-<Warning>Windows is not supported. Zinc uses `shm_open` and `mmap`, which are POSIX APIs not available on Windows.</Warning>
-
-## Verify the installation
-
-Build the core, then run the C ABI test:
+Go links against the repository's `target/release` directory. C++, Java, and C# need the shared library available to the native loader. For development, set the loader path:
 
 ```bash
-cargo test --manifest-path core/Cargo.toml
+# Linux
+export LD_LIBRARY_PATH="$PWD/target/release:${LD_LIBRARY_PATH:-}"
+# macOS
+export DYLD_LIBRARY_PATH="$PWD/target/release:${DYLD_LIBRARY_PATH:-}"
 ```
 
-All tests should pass on Linux and macOS.
+## Verify
+
+```bash
+cargo test --workspace --all-targets --locked
+python3 -m pip install -e 'adapters/python[test]'
+bash tests/runner.sh
+```
+
+The runner tests installed language runtimes and reports missing tools. CI installs all adapter runtimes on Linux and macOS. For a cross-process example, follow the [quickstart](/getting-started/quickstart).

@@ -3,7 +3,7 @@ title: "Writing and Reading Data"
 description: "How to read and write data in shared memory from any language"
 ---
 
-Once a region is created or opened, reading and writing data is a matter of pointer arithmetic on the data area. The first byte of usable data is at offset 64 (after the header).
+Once a region is created or opened, reading and writing data is a matter of pointer arithmetic on the data area. The first byte of usable data is at offset `page_size` from the mapping base, after the header page. Adapter views and `as_ptr()` already point to that byte.
 
 ## Getting a pointer to the data area
 
@@ -59,7 +59,7 @@ Every adapter provides a method that returns a view of the shared memory:
   ```
 </CodeGroup>
 
-The returned view is a direct mapping into physical memory. Writing to it is immediately visible to all other processes that have the same region open. No flush, no commit, no sync.
+The returned view is a direct mapping into physical memory. Writes change the shared storage. Use notifications or atomic operations to publish them, and prevent concurrent plain-data reads and writes. Keep the region open while using borrowed views; Node and Python views retain their mappings.
 
 ## Writing primitive values
 
@@ -164,7 +164,7 @@ The most common use case for Zinc is sharing large arrays, tensors, frames, poin
 
 ## Memory layout conventions
 
-Zinc does not impose a data format. Bytes at offset 64 and beyond are yours to manage. For polyglot setups where multiple languages read and write the same region, you need a layout convention.
+Zinc does not impose a data format. Bytes starting at the data pointer are yours to manage. For polyglot setups where multiple languages read and write the same region, you need a layout convention.
 
 Common approaches:
 
@@ -172,11 +172,11 @@ Common approaches:
 - **Schema-driven layout.** Use a zero-copy serialization framework like FlatBuffers or Cap'n Proto that operates on shared memory directly.
 - **Header + data.** Write a small descriptor at the start of the data area describing the number and types of the remaining fields.
 
-The simplest approach is a fixed layout with explicit offsets. Not flexible, but trivially correct in every language.
+A fixed layout with explicit offsets is easy to inspect. Agree on field widths, alignment, and byte order across languages, and check each access against capacity.
 
 ## Capacity
 
-The `capacity` value represents usable bytes after the 64-byte header. It is set at creation time and cannot be changed. The value must be a multiple of the system page size (typically 4096 bytes).
+The `capacity` value represents usable bytes after the header page. It is set at creation time and cannot be changed. The value must be a multiple of the system page size (typically 4096 bytes).
 
 To determine the capacity:
 

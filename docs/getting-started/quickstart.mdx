@@ -1,207 +1,48 @@
 ---
 title: "Quickstart"
-description: "Share memory between two processes in under a minute"
+description: "Create a region in Rust and read it from Python"
 ---
 
-Create a shared memory region in one process, write data, open it from another, read it back.
+This example keeps a Rust creator alive while a Python process opens the same region. Run it from a repository checkout after following the [installation guide](/getting-started/installation).
 
-## Step 1: Create a writer
+## Start the writer
 
-The writer process creates a shared region, writes a float value, and notifies any waiters.
+In the first terminal:
 
-<CodeGroup>
-  ```rust Rust
-  use zinc_core::SharedRegion;
+```bash
+cargo run --release -p zinc-core --example interop -- my-data
+```
 
-  let region = SharedRegion::create("my-data", 4096)?;
-  let ptr = region.as_ptr() as *mut f32;
-  unsafe { std::ptr::write(ptr, 42.0); }
-  region.notify();
-  // Keep region alive until reader has opened it
-  std::thread::sleep(std::time::Duration::from_secs(5));
-  ```
+The program creates a one-page data area, writes the four bytes `ZINC`, and sends a notification. It prints `ready` and waits for a line on standard input. Leave it running while you start the reader.
 
-  ```python Python
-  from zinc import SharedRegion
+## Read from Python
 
-  region = SharedRegion.create("my-data", 4096)
-  buf = region.as_buffer()
-  buf[:4] = (42.0).to_bytes(4, 'little')
-  region.notify()
-  import time; time.sleep(5)
-  ```
+In a second terminal, from the repository root:
 
-  ```go Go
-  import "zinc"
+```bash
+cargo build --release -p zinc-core --lib
+python3 -m pip install -e adapters/python
+```
 
-  region, _ := zinc.Create("my-data", 4096)
-  data := region.Bytes()
-  val := float32(42.0)
-  data[0] = byte(val)
-  region.Notify()
-  time.Sleep(5 * time.Second)
-  ```
+Then run:
 
-  ```typescript Node.js
-  import { ZincRegion } from '@ossl/zinc';
+```python
+from zinc import SharedRegion
 
-  const region = ZincRegion.create("my-data", 4096);
-  const buf = region.asBuffer();
-  buf.writeFloatLE(42.0, 0);
-  region.notify();
-  await new Promise(r => setTimeout(r, 5000));
-  ```
+with SharedRegion.open("my-data") as region:
+    if not region.wait(1000):
+        raise TimeoutError("writer did not publish data")
+    print(bytes(region.as_buffer()[:4]).decode("ascii"))
+```
 
-  ```typescript Bun
-  import { SharedRegion } from "zinc-bun";
+The reader prints `ZINC`. It consumes the notification before reading, even though the writer sent it before the reader opened the region.
 
-  const region = SharedRegion.create("my-data", 4096);
-  const buf = region.buffer();
-  buf.writeFloatLE(42.0, 0);
-  region.notify();
-  setTimeout(() => region.close(), 5000);
-  ```
-
-  ```typescript Deno
-  import { SharedRegion } from "@ossl/zinc";
-
-  const region = SharedRegion.create("my-data", 4096);
-  const buf = region.buffer();
-  const view = new DataView(buf.buffer);
-  view.setFloat32(0, 42.0, true);
-  region.notify();
-  await new Promise(r => setTimeout(r, 5000));
-  ```
-
-  ```cpp C++
-  #include "zinc.hpp"
-
-  auto region = zinc::SharedRegion::create("my-data", 4096);
-  auto bytes = region.bytes();
-  *reinterpret_cast<float*>(bytes.data()) = 42.0f;
-  region.notify();
-  std::this_thread::sleep_for(std::chrono::seconds(5));
-  ```
-
-  ```java Java
-  var region = dev.zinc.SharedRegion.create("my-data", 4096);
-  var buf = region.buffer();
-  buf.putFloat(0, 42.0f);
-  region.notify();
-  Thread.sleep(5000);
-  region.close();
-  ```
-
-  ```csharp C#
-  using Zinc;
-
-  var region = SharedRegion.Create("my-data", 4096);
-  var bytes = region.Bytes();
-  BitConverter.GetBytes(42.0f).CopyTo(bytes);
-  region.Notify();
-  Thread.Sleep(5000);
-  region.Dispose();
-  ```
-</CodeGroup>
-
-## Step 2: Create a reader
-
-Run this in a separate terminal window while the writer is running.
-
-<CodeGroup>
-  ```rust Rust
-  use zinc_core::SharedRegion;
-
-  let region = SharedRegion::open("my-data")?;
-  let ptr = region.as_ptr() as *const f32;
-  let val = unsafe { std::ptr::read(ptr) };
-  println!("Read: {}", val); // 42.0
-  region.wait(5000); // blocks until next notification
-  ```
-
-  ```python Python
-  from zinc import SharedRegion
-
-  region = SharedRegion.open("my-data")
-  buf = region.as_buffer()
-  val = float.from_bytes(buf[:4], 'little')
-  print(f"Read: {val}")  # 42.0
-  ```
-
-  ```go Go
-  import "zinc"
-
-  region, _ := zinc.Open("my-data")
-  data := region.Bytes()
-  val := *(*float32)(unsafe.Pointer(&data[0]))
-  fmt.Printf("Read: %f\n", val)
-  ```
-
-  ```typescript Node.js
-  import { ZincRegion } from '@ossl/zinc';
-
-  const region = ZincRegion.open("my-data");
-  const buf = region.asBuffer();
-  console.log("Read:", buf.readFloatLE(0)); // 42.0
-  ```
-
-  ```typescript Bun
-  import { SharedRegion } from "zinc-bun";
-
-  const region = SharedRegion.open("my-data");
-  const buf = region.buffer();
-  console.log("Read:", buf.readFloatLE(0));
-  ```
-
-  ```typescript Deno
-  import { SharedRegion } from "@ossl/zinc";
-
-  const region = SharedRegion.open("my-data");
-  const buf = region.buffer();
-  const view = new DataView(buf.buffer);
-  console.log("Read:", view.getFloat32(0, true));
-  ```
-
-  ```cpp C++
-  #include "zinc.hpp"
-
-  auto region = zinc::SharedRegion::open("my-data");
-  auto bytes = region.bytes();
-  float val = *reinterpret_cast<const float*>(bytes.data());
-  std::cout << "Read: " << val << "\n";
-  ```
-
-  ```java Java
-  var region = dev.zinc.SharedRegion.open("my-data");
-  var buf = region.buffer();
-  float val = buf.getFloat(0);
-  System.out.println("Read: " + val);
-  region.close();
-  ```
-
-  ```csharp C#
-  var region = SharedRegion.Open("my-data");
-  var bytes = region.Bytes();
-  float val = BitConverter.ToSingle(bytes);
-  Console.WriteLine($"Read: {val}");
-  region.Dispose();
-  ```
-</CodeGroup>
-
-## Step 3: Verify
-
-Run the writer first. Then run the reader in a separate terminal. The reader prints `42.0`. Same value the writer wrote, same physical memory. No serialization, no socket, no file I/O.
+Press Enter in the writer's terminal to close the creator and unlink the name. Existing mappings remain valid until their handles and retained views close.
 
 ## What happened
 
-1. The writer called `zinc_create("my-data", 4096)`, which called `shm_open` with `O_CREAT | O_EXCL`, then `ftruncate` to set the size, then `mmap` to map it.
-2. The reader called `zinc_open("my-data")`, which called `shm_open` without `O_CREAT`, then `mmap` to map the same pages.
-3. Both processes now have the same physical RAM pages in their address space.
-4. The writer wrote `42.0` to the first 4 bytes. The reader read those same bytes.
-5. The transfer cost was zero. There was nothing to transfer.
+The creator used `shm_open`, `ftruncate`, and `mmap` to create a shared mapping. Python opened the same backing pages through the C ABI. Its buffer view accesses those bytes without a transfer through a socket or a serialization step.
 
-## Next steps
+Data starts after the first header page. The writer uses the system page size, so this example works with both 4096-byte and 16384-byte pages.
 
-- Read about [core concepts](/getting-started/concepts) to understand the ownership model, naming rules, and lifecycle.
-- See the [notify/wait guide](/guides/notify-wait) for synchronization between processes.
-- Browse the [language adapter reference](/adapters/rust) for your language.
+For repeated updates, add an acknowledgement before the writer overwrites data that a reader may still be using. See [notify and wait](/guides/notify-wait), [data access](/guides/writing-data), and the [adapter references](/adapters/rust).

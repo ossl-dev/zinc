@@ -7,11 +7,13 @@ The Go adapter uses cgo to call the Zinc C ABI directly. It returns a `[]byte` s
 
 ## Installation
 
-```bash
-go get github.com/ossl/zinc/adapters/go
-```
+Build the core from a [source checkout](/getting-started/installation), then set up the adapter:
 
-The adapter needs the `zinc_core` shared library at runtime. Place it on the library search path or link it at build time.
+```bash
+# In your application go.mod:
+# replace zinc => /path/to/zinc/adapters/go
+go get zinc
+```
 
 ## SharedRegion
 
@@ -22,7 +24,7 @@ import "zinc"
 ### Create
 
 ```go
-region, err := zinc.Create("my-data", 4096)
+region, err := zinc.Create("my-data", 16384)
 ```
 
 Creates a new region. Returns an error if the region already exists or if the name or size is invalid.
@@ -54,10 +56,10 @@ region.Notify()
 ### Wait
 
 ```go
-ok := region.Wait(timeoutMs uint32) // returns bool
+ok := region.Wait(1000)
 ```
 
-Returns `true` if notified, `false` if timed out.
+Returns `true` if notified and `false` on any wait failure, including timeout. `TryWait()` returns `true` when it consumes a pending notification.
 
 ### Close
 
@@ -80,7 +82,7 @@ import (
 
 func main() {
     // Create region
-    region, err := zinc.Create("sensor", 4096)
+    region, err := zinc.Create("sensor", 16384)
     if err != nil {
         panic(err)
     }
@@ -128,7 +130,7 @@ func main() {
 
 ## Cgo flags
 
-The adapter uses `#cgo LDFLAGS: -lzinc_core -L${SRCDIR}/../../core/target/release` to locate the library during development. For production builds, ensure the library is on the system library path or pass `-L` and `-l` flags through `CGO_LDFLAGS`.
+The adapter uses `#cgo LDFLAGS: -lzinc_core -L${SRCDIR}/../../target/release` to locate the library during development. For production builds, ensure the library is on the system library path or pass `-L` and `-l` flags through `CGO_LDFLAGS`.
 
 ## Safety
 

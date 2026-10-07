@@ -1,83 +1,26 @@
-# Zinc — Java Adapter
+# Zinc Java adapter
 
-Zero-copy shared memory for Java via [JNA](https://github.com/java-native-access/jna). No native glue code, ships as a single JAR.
+JNA calls the core library. The source targets Java 17 or later. Linux and macOS are supported.
 
-## Install
-
-### Maven
-
-```xml
-<dependency>
-    <groupId>dev.zinc</groupId>
-    <artifactId>zinc-java</artifactId>
-    <version>0.1.0</version>
-</dependency>
-```
-
-Requires `libzinc_core.dylib` / `libzinc_core.so` on `java.library.path`.
-
-### Building from source
+Registry publishing is pending. From the repository root:
 
 ```bash
-cargo build --release --manifest-path core/Cargo.toml
+cargo build --release -p zinc-core --lib
+export LD_LIBRARY_PATH="$PWD/target/release:${LD_LIBRARY_PATH:-}"
+export DYLD_LIBRARY_PATH="$PWD/target/release:${DYLD_LIBRARY_PATH:-}"
 cd adapters/java
-mvn package
+mvn test
+mvn install
 ```
 
-## Usage
+Import from your source checkout:
 
 ```java
 import dev.zinc.SharedRegion;
-
-// Process A — create
-SharedRegion region = SharedRegion.create("/my-data", 4096);
-var buf = region.buffer();
-buf.putFloat(0, 42.0f);
-region.signal();
-
-// Process B — open
-SharedRegion region2 = SharedRegion.open("/my-data");
-region2.waitForNotification(5000);
-var buf2 = region2.buffer();
-float val = buf2.getFloat(0);
-System.out.println(val); // 42.0
-region2.close();
 ```
 
-## API
+Use the locally installed dev.zinc:zinc-java:0.1.0 jar. `buffer()` returns a ByteBuffer in native byte order; keep the region open while using it. `AutoCloseable` supports try-with-resources. Notifications use `signal()`, `waitForNotification(timeoutMs)`, and `tryWait()` because Object reserves notify and wait for monitors.
 
-### `SharedRegion.create(name, capacity)`
-Create a new shared region.
+Names contain ASCII letters, digits, underscores, and hyphens; do not add a leading slash. Capacity must be positive and a multiple of the system page size. Keep the creator alive until other processes open the region. Closing the creator unlinks the name while existing mappings remain valid.
 
-### `SharedRegion.open(name)`
-Open an existing shared region.
-
-### `region.buffer() → ByteBuffer`
-Zero-copy `ByteBuffer` backed by shared memory.
-
-### `region.signal()`
-Signal all waiters.
-
-### `region.waitForNotification(timeoutMs) → boolean`
-Block until notified.
-
-### `region.close()`
-Release the handle (implements `AutoCloseable`).
-
-## Publish
-
-```bash
-cd adapters/java
-mvn deploy -P release
-```
-
-## Platform support
-
-| OS | Status |
-|---|---|
-| Linux | ✅ |
-| macOS | ✅ |
-
-> Windows is not supported. Zinc requires POSIX `shm_open` + `mmap`.
-
-Use `signal()` and `waitForNotification(timeoutMs)` for notifications; Java reserves `Object.notify()` and `Object.wait()` for monitors. `tryWait()` consumes a pending notification without blocking. Buffers use native byte order and are valid only while the region is open. Do not close a handle while another thread is using it.
+See the [API reference](../../docs/adapters/java.mdx), [notification rules](../../docs/guides/notify-wait.mdx), and [source installation guide](../../docs/getting-started/installation.mdx).

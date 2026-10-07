@@ -12,11 +12,11 @@ Zinc v2 is a complete rewrite. If you used the Zig-based v1, this page covers wh
 | Zig core | Rust core (`zinc-core`) |
 | Ring buffer as transport | Raw `mmap` region, you control the data layout |
 | 4KB slot limit in ring | No limit beyond region capacity |
-| Zig FFI per language | C ABI (8 functions), one `libzinc_core.so` for all languages |
-| Serialize → memcpy → memcpy → deserialize | Zero copies, write structs directly into shared memory |
-| macOS: corrupt sender PID | macOS: fixed across the board |
-| Node: 4KB `Vec` leak per `poll()` tick | Node: napi-rs addon, no polling, zero leaks |
-| JavaScript: `setInterval` polling (~1ms floor) | All languages: real notify/wait via futex or adaptive spin |
+| Zig FFI per language | C ABI (9 functions), a shared Rust core |
+| Serialize → memcpy → memcpy → deserialize | Mapped views; applications agree on layout and synchronization |
+| macOS: corrupt sender PID | macOS: POSIX mapping and bounded polling fallback |
+| Node: 4KB `Vec` leak per `poll()` tick | Node: napi-rs addon with retained buffer mappings |
+| JavaScript: `setInterval` polling (~1ms floor) | All languages: real notify/wait via Linux futex or macOS bounded polling |
 
 ## Why v2 is not backward-compatible
 
@@ -43,7 +43,7 @@ const msg = ring.poll(); // polling at setInterval rate
 
 ```typescript
 // v2, Bun
-const region = SharedRegion.create("my-data", 4096);
+const region = SharedRegion.create("my-data", 16384);
 const buf = region.buffer();
 new TextEncoder().encodeInto("hello", buf);
 region.notify(); // real kernel-assisted wake on Linux
@@ -67,7 +67,7 @@ v1 used Zig-compiled `.so`/`.dylib` per platform. v2 uses a single Rust-compiled
 - const ring = new Ring("my-channel");
 - ring.push(data);
 - const out = ring.poll();
-+ const region = SharedRegion.create("my-channel", 4096);
++ const region = SharedRegion.create("my-channel", 16384);
 + region.buffer().set(data);
 + region.notify();
 + // Reader side:
@@ -78,7 +78,7 @@ v1 used Zig-compiled `.so`/`.dylib` per platform. v2 uses a single Rust-compiled
 
 ### Node.js
 
-v1 used Zig FFI via `ffi-napi`. v2 uses [napi-rs](https://napi.rs/) for a compiled native `.node` addon, no FFI overhead.
+v1 used Zig FFI via `ffi-napi`. v2 uses [napi-rs](https://napi.rs/) for a compiled native `.node` addon, with direct Rust core integration.
 
 ```diff
 - const ringBinding = require('./zig/ring.node');
@@ -86,14 +86,14 @@ v1 used Zig FFI via `ffi-napi`. v2 uses [napi-rs](https://napi.rs/) for a compil
 
 - const handle = ringBinding.create("my-channel");
 - ringBinding.write(handle, buffer);
-+ const region = ZincRegion.create("my-channel", 4096);
++ const region = ZincRegion.create("my-channel", 16384);
 + region.asBuffer().set(buffer);
 + region.notify();
 ```
 
 ### Python
 
-v1 called the Zig library through `ctypes`. v2 uses `cffi` (faster FFI) with numpy zero-copy support built-in.
+v1 called the Zig library through `ctypes`. v2 uses `cffi` with numpy zero-copy support built-in.
 
 ```diff
 - import ctypes
@@ -101,7 +101,7 @@ v1 called the Zig library through `ctypes`. v2 uses `cffi` (faster FFI) with num
 - lib.ring_create.restype = ctypes.c_void_p
 - handle = lib.ring_create(b"my-channel")
 + from zinc import SharedRegion
-+ region = SharedRegion.create("my-channel", 4096)
++ region = SharedRegion.create("my-channel", 16384)
 + arr = region.as_numpy(dtype=np.float32)
 + arr[0] = 42.0  # zero-copy write
 ```
@@ -109,8 +109,8 @@ v1 called the Zig library through `ctypes`. v2 uses `cffi` (faster FFI) with num
 ## What v1 didn't have that v2 adds
 
 - **Cross-language zero-copy.** Python numpy, Go slice, C++ span, Java ByteBuffer, C# Span, all backed by the same physical pages.
-- **Type-safe refcounting.** Atomic refcount in the header prevents use-after-unlink.
-- **Notification ring.** v2 has an internal 256-slot MPSC notification ring, so multiple notifies between waits aren't lost.
+- **Creator lifecycle.** The creator unlinks on close; existing mappings remain usable. The header count is diagnostic.
+- **Notification cursor.** Each handle tracks the sequence counter. Several notifies may coalesce into one observed change. A separate configurable u64 ring is available in Rust.
 - **Error codes.** The C ABI returns standard `errno` values (`EEXIST`, `ENOENT`, `EINVAL`, `ETIMEDOUT`).
 - **Version check.** `zinc_version()` returns `(major << 16) | minor` for compatibility checks.
 

@@ -11,7 +11,7 @@ The C ABI is the contract between the Rust core and every language adapter. It i
 typedef void *ZincHandle;
 ```
 
-`ZincHandle` is an opaque pointer to an internal `SharedRegion` object. It is created by `zinc_create` or `zinc_open`, passed by value to all other functions, and freed by `zinc_close`. A null handle is safe to pass to all functions (they return zero or null).
+`ZincHandle` is an opaque pointer to an internal `SharedRegion` object. It is created by `zinc_create` or `zinc_open`, passed by value to all other functions, and freed by `zinc_close`. Pointer and capacity operations return null or zero for a null handle; notify and close do nothing. Wait operations return -22.
 
 ## Function reference
 
@@ -44,9 +44,9 @@ Returns 0 on success, or a negative error code on failure (typically `-2` for no
 uint8_t *zinc_ptr(ZincHandle h);
 ```
 
-Returns a raw pointer to the usable data area of the region (byte 64, just after the header). The pointer is valid as long as the handle is not closed. Returns null if the handle is null.
+Returns a raw pointer to the usable data area of the region (the next page after the header). The pointer is valid as long as the handle is not closed. Returns null if the handle is null.
 
-The returned pointer points directly into the `mmap`'d memory. Writes through this pointer are immediately visible to all processes mapping the same region.
+The returned pointer points directly into the `mmap`'d memory. Processes share the same bytes, but applications must synchronize reads and writes.
 
 ### zinc_capacity
 
@@ -91,7 +91,7 @@ Returns 0 if the counter changed (data is available), `-110` (`ETIMEDOUT`) if th
 uint32_t zinc_version(void);
 ```
 
-Returns the library version encoded as `(major << 16) | minor`. Currently returns `0x00010001` (major 1, minor 1). Adapters should call this at initialization to verify binary compatibility with the loaded library.
+Returns the library version encoded as `(major << 16) | minor`. Currently returns `0x00020001` (header version 2, ABI minor 1). Adapters should call this at initialization to verify binary compatibility with the loaded library.
 
 ## Error return convention
 
@@ -102,7 +102,7 @@ All functions that can fail return `int32_t`. Zero means success. Negative value
 | `EEXIST` | -17 | Region name already exists |
 | `ENOENT` | -2 | Region name not found |
 | `EINVAL` | -22 | Invalid name, size, or handle |
-| `EAGAIN` | -11 | Ring buffer is full |
+| `EAGAIN` | -11 | Ring buffer is full, or no notification is pending |
 | `ETIMEDOUT` | -110 | Wait timed out |
 | `EBADMSG` | -74 | Corrupted region (magic/version mismatch) |
 | `EPERM` | -1 | Permission denied |

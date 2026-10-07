@@ -1,84 +1,24 @@
-# Zinc — C# Adapter
+# Zinc C# adapter
 
-Zero-copy shared memory for C# via P/Invoke. Uses `unsafe` and `Span<byte>` for direct memory access.
+P/Invoke calls the core library. The source targets .NET 8. Linux and macOS are supported.
 
-## Install
-
-### NuGet
-
-```xml
-<PackageReference Include="Zinc" Version="0.1.0" />
-```
-
-Or via CLI:
+Registry publishing is pending. From the repository root:
 
 ```bash
-dotnet add package Zinc
+cargo build --release -p zinc-core --lib
+export LD_LIBRARY_PATH="$PWD/target/release:${LD_LIBRARY_PATH:-}"
+export DYLD_LIBRARY_PATH="$PWD/target/release:${DYLD_LIBRARY_PATH:-}"
+dotnet test adapters/csharp/tests/Zinc.Tests.csproj
 ```
 
-Requires `libzinc_core.dylib` / `libzinc_core.so` in the working directory or on the system library path.
-
-### Building from source
-
-```bash
-cargo build --release --manifest-path core/Cargo.toml
-cd adapters/csharp
-dotnet build
-```
-
-## Usage
+Import from your source checkout:
 
 ```csharp
 using Zinc;
-
-// Process A — create
-var region = SharedRegion.Create("/my-data", 4096);
-var span = region.Bytes();
-BitConverter.TryWriteBytes(span, 42.0f);
-region.Notify();
-
-// Process B — open
-var region2 = SharedRegion.Open("/my-data");
-region2.Wait(5000);
-var span2 = region2.Bytes();
-float val = BitConverter.ToSingle(span2);
-Console.WriteLine(val); // 42.0
-region2.Dispose();
 ```
 
-## API
+Add a project reference to `adapters/csharp/Zinc.csproj`. `Bytes()` returns a Span<byte> that borrows the mapping; keep the region open while using it. `IDisposable` supports using statements. `Wait()` returns false on timeout and throws on other errors; `TryWait()` checks without blocking.
 
-### `SharedRegion.Create(name, capacity) → SharedRegion`
-Create a new shared region.
+Names contain ASCII letters, digits, underscores, and hyphens; do not add a leading slash. Capacity must be positive and a multiple of the system page size. Keep the creator alive until other processes open the region. Closing the creator unlinks the name while existing mappings remain valid.
 
-### `SharedRegion.Open(name) → SharedRegion`
-Open an existing shared region.
-
-### `region.Bytes() → Span<byte>`
-Zero-copy span over shared memory.
-
-### `region.Notify()`
-Signal all waiters.
-
-### `region.Wait(timeoutMs=1000) → bool`
-Block until notified.
-
-### `region.Dispose()`
-Release the handle (implements `IDisposable`).
-
-## Publish
-
-```bash
-cd adapters/csharp
-dotnet pack -c Release
-dotnet nuget push bin/Release/Zinc.0.1.0.nupkg
-```
-
-## Platform support
-
-| OS | Status |
-|---|---|
-| Linux | ✅ |
-| macOS | ✅ |
-
-> Windows is not supported. Zinc requires POSIX `shm_open` + `mmap`.
+See the [API reference](../../docs/adapters/csharp.mdx), [notification rules](../../docs/guides/notify-wait.mdx), and [source installation guide](../../docs/getting-started/installation.mdx).

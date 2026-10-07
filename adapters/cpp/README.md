@@ -1,91 +1,24 @@
-# Zinc — C++ Adapter
+# Zinc C++ adapter
 
-Header-only RAII wrapper over the C ABI for C++20. Zero cost abstraction — the `zinc::SharedRegion` class wraps the C handle with move semantics and `std::span` access.
+A C++20 header wraps the C ABI with move semantics and std::span. Linux and macOS are supported.
 
-## Install
+Registry publishing is pending. From the repository root:
 
-No build step. Copy `include/zinc.hpp` into your project, or use the included path.
-
-Requires `libzinc_core.dylib` / `libzinc_core.so` at link time.
-
-### CMake
-
-```cmake
-add_library(zinc INTERFACE)
-target_include_directories(zinc INTERFACE ${ZINC_ROOT}/adapters/cpp/include)
-target_link_libraries(your_target PRIVATE zinc)
+```bash
+cargo build --release -p zinc-core --lib
+cmake -S adapters/cpp -B target/cpp-tests
+cmake --build target/cpp-tests
+ctest --test-dir target/cpp-tests --output-on-failure
 ```
 
-### Conan / vcpkg
-
-Pending package registration. For now, vendor the header.
-
-## Usage
+Import from your source checkout:
 
 ```cpp
 #include "zinc.hpp"
-#include <iostream>
-
-int main() {
-    // Process A — create
-    auto region = zinc::SharedRegion::create("/my-data", 4096);
-    auto bytes = region.bytes();
-    *reinterpret_cast<float*>(bytes.data()) = 42.0f;
-    region.notify();
-
-    // Process B — open
-    auto region2 = zinc::SharedRegion::open("/my-data");
-    region2.wait(5000);
-    auto bytes2 = region2.bytes();
-    float val = *reinterpret_cast<const float*>(bytes2.data());
-    std::cout << val << "\n"; // 42.0
-}
 ```
 
-## API
+Vendor both `adapters/cpp/include/zinc.hpp` and `include/zinc.h`, and link libzinc_core. `bytes()` borrows the mapping and must not outlive its region. Handles close on destruction. `wait()` returns false on timeout and throws on other errors; `try_wait()` checks without blocking. Names passed as string_view need not be NUL-terminated.
 
-### `zinc::SharedRegion::create(name, capacity) → SharedRegion`
-Create a new shared region. Throws `std::system_error` on failure.
+Names contain ASCII letters, digits, underscores, and hyphens; do not add a leading slash. Capacity must be positive and a multiple of the system page size. Keep the creator alive until other processes open the region. Closing the creator unlinks the name while existing mappings remain valid.
 
-### `zinc::SharedRegion::open(name) → SharedRegion`
-Open an existing shared region.
-
-### `region.bytes() → std::span<std::byte>`
-Zero-copy span of the shared memory.
-
-### `region.capacity() → std::size_t`
-Size of the region.
-
-### `region.notify()`
-Signal all waiters.
-
-### `region.wait(timeoutMs=1000) → bool`
-Block until notified.
-
-### `region.close()`
-Release the handle (also in destructor).
-
-## Publish
-
-The header is published as part of the Zinc core release on GitHub.
-
-```bash
-gh release upload v0.1.0 adapters/cpp/include/zinc.hpp
-```
-
-## Platform support
-
-| OS | Status |
-|---|---|
-| Linux | ✅ |
-| macOS | ✅ |
-
-> Windows is not supported. Zinc requires POSIX `shm_open` + `mmap`.
-
-`try_wait()` consumes a pending notification without blocking. `wait()` returns false on timeout and throws on other failures. Names passed as `std::string_view` need not be NUL-terminated. Spans borrow the mapping and must not outlive it.
-
-```bash
-cmake -S adapters/cpp -B /tmp/zinc-cpp
-cmake --build /tmp/zinc-cpp
-ctest --test-dir /tmp/zinc-cpp --output-on-failure
-```
+See the [API reference](../../docs/adapters/cpp.mdx), [notification rules](../../docs/guides/notify-wait.mdx), and [source installation guide](../../docs/getting-started/installation.mdx).

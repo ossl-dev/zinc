@@ -7,11 +7,7 @@ The Rust adapter is the canonical API. `SharedRegion` lives in the core crate an
 
 ## Installation
 
-```bash
-cargo add zinc-core
-```
-
-If you are developing against a local copy of Zinc:
+Build the core from a [source checkout](/getting-started/installation), then set up the adapter:
 
 ```bash
 cargo add zinc-core --path /path/to/zinc/core
@@ -28,7 +24,7 @@ use zinc_core::SharedRegion;
 Creates a new region. The `name` must match `[a-zA-Z0-9_-]+`. The `capacity` must be a multiple of the system page size (typically 4096).
 
 ```rust
-let region = SharedRegion::create("my-data", 4096)?;
+let region = SharedRegion::create("my-data", 16384)?;
 ```
 
 Returns `Ok(SharedRegion)` on success, or `Err(ZincError)`.
@@ -43,7 +39,7 @@ let region = SharedRegion::open("my-data")?;
 
 ### as_ptr
 
-Returns a raw `*mut u8` pointing to the data area (first byte after the 64-byte header).
+Returns a raw `*mut u8` pointing to the data area (first byte after the header page).
 
 ```rust
 let ptr = region.as_ptr();
@@ -92,55 +88,19 @@ if region.try_wait() {
 
 ### Drop
 
-Regions close automatically when `SharedRegion` drops. If the handle is the owner and no other handles are open, the shared memory segment gets unlinked.
+Regions close automatically when `SharedRegion` drops. If the handle is the creator, the name is unlinked. Openers keep their existing mappings until they close.
 
 ```rust
 {
-    let region = SharedRegion::create("temp", 4096)?;
+    let region = SharedRegion::create("temp", 16384)?;
     // region is active here
 }
 // region is closed and unlinked
 ```
 
-## Example: producer-consumer
+## Data access
 
-```rust
-use zinc_core::SharedRegion;
-use std::thread;
-use std::time::Duration;
-
-// Producer
-let producer = thread::spawn(|| -> Result<(), zinc_core::ZincError> {
-    let r = SharedRegion::create("pipeline", 65536)?;
-    let ptr = r.as_ptr();
-    for i in 0..10 {
-        unsafe { std::ptr::write(ptr as *mut u64, i); }
-        r.notify();
-        thread::sleep(Duration::from_millis(10));
-    }
-    Ok(())
-});
-
-// Consumer
-let consumer = thread::spawn(|| -> Result<(), zinc_core::ZincError> {
-    let r = SharedRegion::open("pipeline")?;
-    let ptr = r.as_ptr() as *const u64;
-    loop {
-        match r.wait(5000) {
-            Ok(()) => {
-                let val = unsafe { std::ptr::read(ptr) };
-                println!("received: {val}");
-            }
-            Err(zinc_core::ZincError::TimedOut) => break,
-            Err(e) => return Err(e),
-        }
-    }
-    Ok(())
-});
-
-producer.join().unwrap()?;
-consumer.join().unwrap()?;
-```
+Raw pointers require bounds checks and synchronization by the caller. A successful wait publishes preceding writes but does not keep a producer from overwriting data during a read. See [notify and wait](/guides/notify-wait) for the coordination rules.
 
 ## Working with the header
 

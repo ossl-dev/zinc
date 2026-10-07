@@ -10,17 +10,17 @@ The C++ adapter is a header-only library that wraps the C ABI in RAII types and 
 Copy `zinc.hpp` into your project:
 
 ```bash
-cp adapters/cpp/include/zinc.hpp /your/project/include/
+cp adapters/cpp/include/zinc.hpp include/zinc.h /your/project/include/
 ```
 
 Link against `libzinc_core` at build time:
 
 ```bash
 # Linux
-g++ -std=c++20 -o myapp myapp.cpp -lzinc_core -L/path/to/core/target/release
+g++ -std=c++20 -o myapp myapp.cpp -lzinc_core -L/path/to/target/release
 
 # macOS
-clang++ -std=c++20 -o myapp myapp.cpp -lzinc_core -L/path/to/core/target/release
+clang++ -std=c++20 -o myapp myapp.cpp -lzinc_core -L/path/to/target/release
 ```
 
 ## SharedRegion
@@ -34,7 +34,7 @@ using namespace zinc;
 ### create
 
 ```cpp
-auto region = SharedRegion::create("my-data", 4096);
+auto region = SharedRegion::create("my-data", 16384);
 ```
 
 Creates a new region. Throws `std::system_error` on failure. The error code maps to the negated Zinc error code.
@@ -90,7 +90,7 @@ Returns `true` on notification, `false` on timeout.
 
 ```cpp
 {
-    auto region = SharedRegion::create("temp", 4096);
+    auto region = SharedRegion::create("temp", 16384);
     // region is active here
 }
 // region is automatically closed and (if owner) unlinked
@@ -107,36 +107,28 @@ auto b = std::move(a);
 
 ```cpp
 #include "zinc.hpp"
+#include <cstring>
 #include <iostream>
-#include <thread>
 
 int main() {
-    // Writer thread
-    std::thread writer([] {
-        auto region = zinc::SharedRegion::create("cpp-channel", 4096);
-        auto bytes = region.bytes();
-        *reinterpret_cast<uint64_t*>(bytes.data()) = 42;
-        region.notify();
-        std::this_thread::sleep_for(std::chrono::seconds(2));
-    });
+    auto writer = zinc::SharedRegion::create("cpp-channel", 16384);
+    uint64_t value = 42;
+    std::memcpy(writer.bytes().data(), &value, sizeof(value));
+    writer.notify();
 
-    // Reader thread
-    std::thread reader([] {
-        auto region = zinc::SharedRegion::open("cpp-channel");
-        if (region.wait(5000)) {
-            auto bytes = region.bytes();
-            auto val = *reinterpret_cast<const uint64_t*>(bytes.data());
-            std::cout << "read: " << val << "\n"; // 42
-        }
-    });
-
-    writer.join();
-    reader.join();
+    auto reader = zinc::SharedRegion::open("cpp-channel");
+    if (reader.wait(5000)) {
+        uint64_t result;
+        std::memcpy(&result, reader.bytes().data(), sizeof(result));
+        std::cout << result << "\n";
+    }
 }
 ```
+
+This uses two handles in one process. For separate processes, keep the creator running until the reader finishes. Spans must not outlive their region. `try_wait()` consumes a pending notification without blocking.
 
 ## Requirements
 
 - C++20 or later (for `std::span`)
-- A C++ compiler that supports `std::span` (GCC 10+, Clang 7+, MSVC 2019 16.10+)
+- A C++ compiler that supports `std::span` on Linux or macOS
 - The `zinc_core` shared library on the library search path at runtime

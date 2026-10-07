@@ -7,15 +7,10 @@ The Python adapter uses cffi (not ctypes) for FFI bindings. It wraps numpy's `np
 
 ## Installation
 
-```bash
-pip install zinc-shm
-```
-
-Or from source:
+Build the core from a [source checkout](/getting-started/installation), then set up the adapter:
 
 ```bash
-cd adapters/python
-pip install -e .
+python3 -m pip install -e 'adapters/python[numpy]'
 ```
 
 ## SharedRegion
@@ -27,7 +22,7 @@ from zinc import SharedRegion
 ### create
 
 ```python
-region = SharedRegion.create("my-data", 4096)
+region = SharedRegion.create("my-data", 16384)
 ```
 
 Creates a new region. Raises `OSError` if the name already exists, the name is invalid, or the capacity is not page-aligned.
@@ -47,6 +42,7 @@ Returns a `memoryview` backed directly by the shared mmap. No copying occurs.
 ```python
 buf = region.as_buffer()
 # buf is a memoryview, writable and sliceable
+import struct
 buf[:4] = struct.pack('<I', 42)
 ```
 
@@ -103,21 +99,22 @@ import numpy as np
 import struct
 
 # Writer process
-writer = SharedRegion.create("tensor-data", 8192)
+writer = SharedRegion.create("tensor-data", 16384)
 arr = writer.as_numpy(dtype=np.float32)
-arr[:] = np.linspace(0, 1, 2048, dtype=np.float32)
+arr[:] = np.linspace(0, 1, arr.size, dtype=np.float32)
 writer.notify()
 
 # Reader process (separate terminal)
 reader = SharedRegion.open("tensor-data")
 arr = reader.as_numpy(dtype=np.float32)
-print(arr[:5])  # [0. 0.00048828 0.00097656 0.00146484 0.00195312]
+if reader.wait(1000):
+    print(arr[:5])
 ```
 
 The `as_numpy` call returns a view, not a copy. Writing to the array from either process modifies the same physical memory.
 
 ## FFI details
 
-The adapter loads `libzinc_core.{so,dylib,dll}` at import time. It reads `zinc.h` from `include/` relative to the Python package to define the FFI signatures. If the header is missing, it falls back to a hardcoded CDEF.
+The adapter loads `libzinc_core.{so,dylib}` from the repository's `target/release` directory at import time. Its CFFI declarations match the generated C ABI. Build the core before importing it.
 
-The library path is resolved relative to the Python package location. If the library is not found, copy it to a standard library path or set `LD_LIBRARY_PATH` / `DYLD_LIBRARY_PATH`.
+`try_wait()` consumes a pending notification without blocking. `close()` prevents new operations; exported memoryviews and NumPy arrays keep their mapping alive until released.

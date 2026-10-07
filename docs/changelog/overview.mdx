@@ -4,6 +4,20 @@ description: "Product updates and releases"
 mode: "center"
 ---
 
+<Update label="October 8, 2026">
+
+Region opens now reject truncated mappings and inconsistent headers. Failed mapping operations release their resources. Closing the creator removes the name while existing readers keep their mappings.
+
+The ring supports multiple producers and consumers, configurable capacity, `try_push`, and queue stats. Its tests check concurrent delivery and counter wraparound.
+
+`try_wait` is available in Rust and the adapters. Linux waits retry interruptions and spurious wakes; macOS waits use bounded spinning followed by short sleeps. C exports reject null input pointers and document their pointer contracts.
+
+Node buffers and Python views retain their mappings until collection. Bun and Deno close handles idempotently. Java uses `signal()` and `waitForNotification()` to avoid `Object` monitor methods. C++ accepts non-terminated string views and now has a compiled integration test.
+
+The integration runner includes a Rust-to-Python process test. CI covers all adapters and adds an aarch64 Linux core job. The Valgrind job runs the test executable directly and propagates failures. Benchmark and lifecycle documentation now describe the implemented behavior and measurement limits.
+
+</Update>
+
 <Update label="Week of May 29, 2026">
 
 ## New features

@@ -1,143 +1,39 @@
 ---
 title: "Contributing"
-description: "How to build, test, and contribute to Zinc"
-mode: "center"
+description: "Build, test, and change Zinc"
 ---
 
-Zinc is an open-source project. Contributions are welcome at every level: bug reports, documentation improvements, new language adapters, and platform backends.
+Start with the [roadmap](https://github.com/ossl-dev/zinc/blob/main/ROADMAP.md) and [design rationale](https://github.com/ossl-dev/zinc/blob/main/RFC-001.md). Keep a change focused on a bug or feature with a clear behavioral outcome.
 
-## Repository structure
+## Build and check
 
-```
-zinc/
-├── core/              # Rust core library (the heart of everything)
-├── include/           # Generated C header (zinc.h)
-├── adapters/          # Language-specific wrappers
-│   ├── python/
-│   ├── go/
-│   ├── node/
-│   ├── bun/
-│   ├── deno/
-│   ├── cpp/
-│   ├── java/
-│   └── csharp/
-├── docs/              # Mintlify documentation
-├── examples/          # Multi-language examples
-└── benches/           # Criterion benchmarks
-```
-
-## Building the core
+From a repository checkout:
 
 ```bash
-git clone https://github.com/ossl-dev/zinc
-cd zinc
-cargo build --release --manifest-path core/Cargo.toml
+cargo build --release -p zinc-core --lib --example interop --locked
+cargo fmt --all -- --check
+cargo test --workspace --all-targets --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
-This produces `core/target/release/libzinc_core.{so,dylib}` and generates `include/zinc.h`.
+Install the adapter runtimes you need, then run `bash tests/runner.sh`. Python needs `python3 -m pip install -e 'adapters/python[test]'`. The Node package has its own Cargo manifest and checks. The [development guide](https://github.com/ossl-dev/zinc/blob/main/DEVELOPMENT_GUIDE.md) describes the layout, dependencies, and benchmark limits.
 
-## Running tests
+## Changes to the core
 
-```bash
-# Rust core tests
-cargo test --manifest-path core/Cargo.toml
+Mapping operations live in `core/src/platform/unix.rs`. `MappedFile` unmaps on drop and file descriptors close after mapping. Notification behavior lives in `core/src/sync.rs`. Preserve the timeout and memory-ordering contracts on both supported platforms.
 
-# With specific test
-cargo test --manifest-path core/Cargo.toml -- create_open_write_read
+Add regression tests for behavioral fixes. Check failed setup, creator-first close, pending notifications, and capacity boundaries when they apply. Keep hot data-access paths free of allocations and preserve the C ABI layout.
 
-# All tests including doc tests
-cargo test --manifest-path core/Cargo.toml --all-features
-```
+Edit Rust declarations or `core/cbindgen.toml` to change the generated C header. Do not edit `include/zinc.h` directly. Update adapter declarations when adding an exported function.
 
-**Python adapter tests:**
+## New adapters
 
-```bash
-cd adapters/python
-pip install -e .
-python -m pytest
-```
+Wrap the C ABI in native types, translate errors, and define the lifetime of returned views. Test against the built library and fail when it cannot load. A blocking wait needs a separate thread or process if the producer runs asynchronously in the same runtime.
 
-**Node adapter tests:**
+Include setup instructions, data-sharing tests, notification tests, and close behavior. Run tests with the actual system page size or a capacity aligned to it.
 
-```bash
-cd adapters/node
-npm install
-npm test
-```
+## Review and releases
 
-**Go adapter tests:**
+Describe the behavior changed and how it was checked. Update affected docs and roadmap entries. Use short commit messages consistent with the repository history.
 
-```bash
-cd adapters/go
-CGO_LDFLAGS="-L../../core/target/release" go test
-```
-
-## Linting
-
-```bash
-cargo clippy --manifest-path core/Cargo.toml -- -D warnings
-```
-
-No `unwrap()` calls are allowed in core library code. The CI build enforces this. Use `?` for error propagation and `.expect("reason")` for infallible operations with a documented justification.
-
-## Adding a new language adapter
-
-Every adapter follows the same pattern:
-
-1. Load `libzinc_core.{so,dylib}` via the language's FFI mechanism.
-2. Read `include/zinc.h` (or replicate the function signatures) to define FFI bindings.
-3. Wrap the C functions in a language-native `SharedRegion` class or module.
-4. Provide `create`, `open`, data access, `notify`, `wait`, and `close` methods.
-5. Implement zero-copy data access (return a native buffer/view/slice backed by the mmap).
-
-New adapters belong in `adapters/<language>/`. Each adapter should have:
-
-- A build file (`Cargo.toml`, `pyproject.toml`, `go.mod`, `package.json`, etc.)
-- A README with installation and usage instructions
-- A test file that exercises the full API surface against a running core library
-
-The test pattern for a new adapter:
-
-1. Build the core library (`cargo build --release`).
-2. Load the adapter and call `create` with a test name and capacity.
-3. Write a known pattern to the data area.
-4. Call `open` in a separate process or thread.
-5. Verify the data is identical (no corruption, no copy).
-6. Test notify/wait roundtrip.
-7. Close both handles and verify the region is unlinked.
-
-## Adding a platform backend
-
-Platform backends live in `core/src/platform/`. Each backend implements three functions:
-
-- `map(name, mode) -> MappedFile` -- creates or opens a shared memory segment and maps it.
-- `unmap(file) -> Result<()>` -- unmaps the segment.
-- `unlink(name) -> Result<()>` -- removes the segment name from the system.
-
-The `sync.rs` module handles notify/wait and is platform-specific. The Linux backend uses `futex`. Other platforms should implement the same semantics: an atomic increment for `notify` and a blocking wait for `wait`.
-
-## Code review
-
-All changes go through pull requests. The review focuses on:
-
-- Correctness of the ownership model (does the new code handle create/open/close/unlink correctly?)
-- Platform portability (does the new code compile on Linux and macOS?)
-- Performance (does the hot path avoid allocation and system calls?)
-- Error handling (are all error paths covered, and do they map to appropriate `ZincError` values?)
-
-## Release process
-
-Releases follow semantic versioning with a single version across all packages. The release checklist:
-
-1. Update version numbers in `core/Cargo.toml` and all adapter package files.
-2. Run the full test suite on Linux and macOS.
-3. Build the core in release mode for all platforms.
-4. Run the integration test suite (all adapters against the release build).
-5. Tag the release (`git tag v<major>.<minor>.<patch>`).
-6. Publish adapter packages to their respective registries.
-
-Each release publishes the core shared library, the C++ header, and adapter packages for all supported languages.
-
-## Questions
-
-Open an issue on GitHub for questions, bug reports, and feature requests. Pull requests should reference the relevant issue.
+The tag workflow builds Linux and macOS shared libraries and attaches them with the C and C++ headers to a GitHub release. Registry publishing for language packages is still pending; tagging does not publish those packages.

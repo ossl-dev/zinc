@@ -1,177 +1,86 @@
-# Zinc, Development Guide
+# Zinc development guide
 
-Zinc is a cross-process shared memory library with a Rust core and C ABI surface, enabling zero-copy data sharing across **any** language, Python, Node.js, Bun, Deno, Go, C++, Java, C#, and more. 
+Zinc maps shared memory between processes on Linux and macOS. The Rust core owns mapping, lifecycle, and notification behavior. Language adapters expose that core through C FFI or napi-rs.
 
-One Rust crate compiles to `libzinc_core.{so,dylib}`. Every language adapter calls the same C ABI via its native FFI mechanism. No reimplementation of logic in adapters.
+## Repository layout
 
----
+| Path | Purpose |
+|------|---------|
+| `core/src/region.rs` | Region creation, validation, notification cursors, cleanup |
+| `core/src/platform/unix.rs` | POSIX shared memory and mapping calls |
+| `core/src/header.rs` | The 64-byte, versioned header |
+| `core/src/sync.rs` | Linux futex wait and macOS polling fallback |
+| `core/src/ring.rs` | Configurable queue with multiple producers and consumers |
+| `core/src/lib.rs` | C ABI and Rust exports |
+| `core/benches/` | Criterion latency, write throughput, and ring benchmarks |
+| `core/examples/` | Comparison programs and the Rust/Python interop fixture |
+| `include/zinc.h` | Generated C header |
+| `adapters/` | Language bindings and integration tests |
+| `tests/runner.sh` | Local integration runner |
+| `RFC-001.md` | Rationale for the shared-memory API |
+| `ROADMAP.md` | Completed work and planned features |
 
-## Code Structure
+## Build
 
-```
-zinc/
-├── .moon/                     # Moon monorepo config
-│   ├── workspace.yml
-│   └── toolchain.yml
-├── .github/workflows/ci.yml   # 2-platform CI (Linux, macOS)
-│
-├── core/                      # Rust, the heart of everything
-│   ├── Cargo.toml
-│   ├── build.rs               # cbindgen → ../include/zinc.h
-│   ├── cbindgen.toml
-│   ├── moon.yml               # Moon task config
-│   └── src/
-│       ├── lib.rs             # pub(crate) re-exports + extern "C" surface
-│       ├── error.rs           # ZincError (thiserror)
-│       ├── header.rs          # RegionHeader, #[repr(C, align(64))]
-│       ├── region.rs          # SharedRegion, create/open/close/unlink
-│       ├── ring.rs            # Lock-free MPSC notification ring
-│       ├── sync.rs            # Cross-process notify/wait (futex + spin fallback)
-│       └── platform/
-│           ├── mod.rs         # cfg-gated dispatch
-│           ├── unix.rs        # Shared POSIX backend (shm_open + mmap)
-│           ├── linux.rs       # Re-exports unix
-│           ├── macos.rs       # Re-exports unix
-│
-├── include/                   # cbindgen output (committed)
-│   └── zinc.h
-│
-├── adapters/
-│   ├── node/                  # napi-rs → .node addon
-│   ├── bun/                   # bun:ffi
-│   ├── deno/                  # Deno.dlopen
-│   ├── python/                # cffi + numpy zero-copy
-│   ├── go/                    # cgo
-│   ├── cpp/                   # Header-only RAII wrapper
-│   ├── java/                  # JNA
-│   └── csharp/                # P/Invoke
-│
-├── benches/throughput.rs      # Throughput + latency benchmark
-├── tests/runner.sh            # Cross-language integration tests
-├── RFC-001.md                 # Architecture rationale
-└── NEW_ARCHITECTURE.md        # Full implementation plan
-```
-
-Start reading in `core/src/region.rs`, that's where `SharedRegion::create()` and `SharedRegion::open()` live.
-
----
-
-## Prerequisites
-
-- **Rust ≥ 1.82**, [rustup.rs](https://rustup.rs/)
-- **Moon ≥ 2.0**, `curl -fsSL https://moonrepo.dev/install/moon.sh | bash`
-- Language runtimes as needed (Python, Node, Go, etc.)
+Use Rust 1.85 or newer for the core library, and current stable Rust for repository checks. Moon is optional.
 
 ```bash
-rustc --version && cargo --version && moon --version
+cargo build --release -p zinc-core
 ```
 
----
+The Cargo workspace writes libraries to `target/release/`, not `core/target/`. The build generates `include/zinc.h`; change Rust declarations or `core/cbindgen.toml` rather than editing the header.
 
-## Building
+The Node addon is a separate Cargo package because it has a different release and runtime integration:
 
 ```bash
-# Build the Rust core (generates libzinc_core.dylib + include/zinc.h)
-cargo build --release --manifest-path core/Cargo.toml
-
-# Or via Moon
-moon run core:build
+cd adapters/node
+npm ci
+npm run build
+npm test
 ```
 
-Outputs:
-- `core/target/release/libzinc_core.{dylib,so,dll}`, loaded by all adapters via FFI
-- `include/zinc.h`, auto-generated C header (opaque `void*` handles)
-
----
-
-## Tests
+## Verify
 
 ```bash
-# Rust core unit tests (8 tests: create/open/read/write/refcount/notify/wait)
-cargo test --manifest-path core/Cargo.toml
+cargo fmt --all -- --check
+cargo test --workspace --all-targets --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+```
 
-# With linting
-cargo clippy --manifest-path core/Cargo.toml -- -D warnings
+For adapters, build the core first. Python tests also use the interop example:
 
-# Cross-language integration tests
+```bash
+cargo build --release -p zinc-core --lib --example interop --locked
+python3 -m pip install -e 'adapters/python[test]'
 bash tests/runner.sh
 ```
 
----
+The runner tests installed language runtimes and prints explicit skips for missing tools. Set `ZINC_PYTHON` to use a virtual environment. Java requires Maven; C# requires the .NET 8 SDK. CI runs all adapters on Linux and macOS, and the core also has an aarch64 Linux job.
+
+The cross-process test starts a Rust creator, reads its bytes and notification from Python, and then shuts down the creator. It fails if creation, sharing, or cleanup fails.
 
 ## Benchmarks
 
 ```bash
-cargo run --release --manifest-path core/Cargo.toml --example throughput
-# Or run directly:
-cargo run --release --bin zinc_bench
+cargo bench -p zinc-core --bench latency
+cargo bench -p zinc-core --bench throughput
+cargo bench -p zinc-core --bench ring
 ```
 
----
+Latency uses two regions for a thread ping-pong. Throughput measures writes and the same-thread notification fast path. Ring benchmarks measure push/pop and batches with contending producers, including thread startup. These are different workloads; do not present their timings as interchangeable IPC latency.
 
-## Architecture Notes
+The comparison examples are exploratory programs. `grpc` uses protobuf messages over length-prefixed TCP, not HTTP/2 gRPC. `redis` needs a local Redis server. See the [benchmark documentation](docs/performance/benchmarks.mdx) for limits.
 
-### The C ABI is the contract
+## Memory and lifecycle
 
-Every adapter calls the same 8 C functions in `include/zinc.h`:
+The first page contains the header and padding. Data begins at the next page boundary. Capacity must be positive and a multiple of the system page size. Names contain ASCII letters, digits, underscores, and hyphens, with a maximum of 25 bytes on macOS and 250 on Linux.
 
-| Function | Purpose |
-|---|---|
-| `zinc_create` | Create owned region, returns opaque handle |
-| `zinc_open` | Open existing region |
-| `zinc_ptr` | Raw pointer to data area (after 64-byte header) |
-| `zinc_capacity` | Usable bytes |
-| `zinc_close` | Drop handle, unmap, maybe unlink |
-| `zinc_notify` | Signal waiters (futex on Linux, atomic+spin elsewhere) |
-| `zinc_wait` | Block until notified or timeout |
-| `zinc_version` | Major/minor version for compatibility checks |
+Closing the creator removes the name. Existing openers keep their mappings until they close. The header count tracks handles but does not govern unlinking or repair crashes. Node buffers and Python views retain mappings while they are alive; other borrowed views require the caller to keep the region open.
 
-### Ownership model
+Notifications publish writes with release/acquire ordering. They coalesce and do not protect data against later concurrent writes. Use atomic data or a protocol that prevents simultaneous reads and writes. Raw C handles must be closed exactly once, after every operation using them has finished.
 
-`SharedRegion` creator owns the segment. Others open it. Ref-counted via atomic in the 64-byte header. Unlink only by the owner. Enforced at the type level.
+Zinc memory is volatile. It provides no disk durability or automatic crash recovery.
 
-### Performance
+## Changes and commits
 
-- `RegionHeader` is exactly 64 bytes (one cache line), no false sharing
-- `parking_lot` mutexes (not std), `CachePadded` atomics
-- Lock-free MPSC ring (256 slots, cache-aligned) for notification tokens
-- Zero heap allocations in hot path (`zinc_ptr`, `zinc_notify`)
-- Linux: futex for kernel-assisted wait. macOS: adaptive spin with yield
-
-### Platform Support
-
-- **Linux**: `shm_open` + `mmap` + futex, full support
-- **macOS**: `shm_open` + `mmap` + spin-wait, full support
-
-**Windows is not supported.** Zinc is a POSIX-only library. `shm_open` and `mmap` do not exist on Windows, and there are no plans to port them.
-
----
-
-## Making Changes
-
-**Rust core (`core/`):**
-
-```bash
-cargo test --manifest-path core/Cargo.toml
-cargo clippy --manifest-path core/Cargo.toml -- -D warnings
-```
-
-The header regenerates automatically on build via `cbindgen`. Never edit `include/zinc.h` by hand.
-
-**Language adapter:**
-
-Rebuild the core first (`cargo build --release`), then test the adapter against the fresh library.
-
-> **Windows is not supported.** Zinc requires `shm_open` and `mmap`, which are POSIX APIs not available on Windows.
-
----
-
-## Commit Convention
-
-```
-[component] short description
-```
-
-Components: `core`, `adapter/node`, `adapter/python`, `adapter/go`, etc.
-
-Examples: `[core] add notify_seq field for proper futex sync`, `[adapter/python] add as_numpy zero-copy view`
+Keep fixes scoped, add regression tests for behavioral changes, and update the affected API docs and roadmap. Existing commit messages use short descriptions such as `Fix shared region validation and mapping cleanup`.

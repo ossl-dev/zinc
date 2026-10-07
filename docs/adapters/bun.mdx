@@ -7,22 +7,22 @@ The Bun adapter uses Bun's built-in `bun:ffi` module to call the Zinc C ABI dire
 
 ## Installation
 
-```bash
-bun add @ossl/zinc-bun
-```
+Build the core from a [source checkout](/getting-started/installation), then set up the adapter:
 
-Requires Bun 1.0 or later.
+```bash
+# From your repository root, import ./adapters/bun/src/index.ts
+```
 
 ## SharedRegion
 
 ```typescript
-import { SharedRegion } from "zinc-bun";
+import { SharedRegion } from "./adapters/bun/src/index.ts";
 ```
 
 ### create
 
 ```typescript
-const region = SharedRegion.create("my-data", 4096);
+const region = SharedRegion.create("my-data", 16384);
 ```
 
 Creates a new region. Throws on failure.
@@ -77,10 +77,10 @@ The region also supports `Symbol.dispose` for `using` statements:
 ## Complete example
 
 ```typescript
-import { SharedRegion } from "zinc-bun";
+import { SharedRegion } from "./adapters/bun/src/index.ts";
 
 // Writer
-const w = SharedRegion.create("bun-channel", 4096);
+const w = SharedRegion.create("bun-channel", 16384);
 const buf = w.buffer();
 buf.writeBigInt64LE(42n, 0);
 w.notify();
@@ -98,6 +98,6 @@ r.close();
 
 ## FFI details
 
-The adapter defines FFI signatures for the 7 C ABI functions. Handles are represented as `BigInt` (64-bit pointers) in Bun's FFI type system. The `zinc_ptr` function returns a pointer that `toBuffer` wraps into a `Buffer` without copying.
+Handles are numeric pointers in Bun's FFI API. `zinc_ptr` returns the data pointer and `toBuffer` wraps it without copying. The loader resolves `target/release/libzinc_core.{so,dylib}` relative to the source checkout.
 
-The library path is resolved relative to the adapter's installation directory. If the library is not found, ensure `libzinc_core.{so,dylib,dll}` is on the standard library path.
+Keep the region open while any returned buffer is in use. `close()` is idempotent and later operations on the region throw. `tryWait()` consumes a pending notification without blocking. Timeouts must be integers between 0 and `2^32 - 1` milliseconds.

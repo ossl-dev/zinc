@@ -28,13 +28,13 @@ Stuff that's built but not released or not finished.
 - [x] C++ adapter: add CMakeLists.txt for easy build, write usage examples
 - [x] Deno adapter: add `deno test` suite
 - [x] Bun adapter: add `bun test` suite
-- [x] Go adapter: test on Linux (CI covers ubuntu-latest, macos-latest)
+- [x] Go adapter: test on Linux and macOS in CI
 
 ### CI / infra
 
 - [x] Wire up `cargo bench` (criterion), benchmarks for throughput and latency
 - [x] Add per-adapter CI jobs (Python test, Go vet + test, Node build)
-- [x] Add CI badge matrix to README
+- [x] Add CI badge to README
 - [x] Add `valgrind` leak check to CI (Linux)
 - [x] Add cargo-deny for license + advisory checks
 
@@ -75,16 +75,16 @@ Stuff that makes the existing thing better, faster, safer.
 
 ### Error handling
 
-- [ ] Distinguish `NotFound` vs `PermissionDenied` at platform level (currently fuzzy on macOS)
+- [x] Distinguish `NotFound` vs `PermissionDenied` at platform level
 - [x] Add `ZincError::WouldBlock` as distinct from `RingFull` (for non-blocking ops)
-- [ ] Platform error messages: include the syscall that failed and errno string
+- [x] Platform error messages: include the syscall that failed and errno string
 
 ### Platform support
 
-- [ ] Officially test and document aarch64 Linux (Raspberry Pi, Graviton, Apple Silicon Linux VMs)
+- [x] Test and document aarch64 Linux (core CI job and local container validation)
 - [ ] FreeBSD support (also has `shm_open` + `mmap`, needs `libc` crate cfg)
 - [ ] Illumos/SmartOS support investigation
-- [ ] Document `vm.max_map_count` tuning for Linux when using many regions
+- [x] Document `vm.max_map_count` tuning for Linux when using many regions
 
 ---
 
@@ -148,19 +148,19 @@ Each adapter should feel native, not like an FFI wrapper.
 
 ### C++
 
-- [ ] Move semantics for `SharedRegion` (move constructor, move assignment)
+- [x] Move semantics for `SharedRegion` (move constructor, move assignment)
 - [ ] `std::span<T>` and `std::mdspan<T>` zero-copy views
 - [ ] Integration with `libunifex` / `std::execution` senders for async wait
 
 ### Java
 
-- [ ] `java.nio.ByteBuffer` zero-copy view via `MappedByteBuffer`
-- [ ] `AutoCloseable` implementation for try-with-resources
+- [x] `java.nio.ByteBuffer` zero-copy view via JNA
+- [x] `AutoCloseable` implementation for try-with-resources
 
 ### C\#
 
 - [ ] `Span<T>` and `Memory<T>` zero-copy views
-- [ ] `IDisposable` pattern for RAII cleanup
+- [x] `IDisposable` pattern for RAII cleanup
 
 ---
 
@@ -194,14 +194,15 @@ Each adapter should feel native, not like an FFI wrapper.
 Not yet triaged into phases. Fix anytime.
 
 - [x] macOS: reduce idle wait CPU with bounded spinning and sleep backoff; kernel wait support remains in Phase 2
+- [ ] Borrowed views: enforce mapping lifetime for Bun, Deno, Go, C++, Java, and C# views (currently a caller contract)
 - [ ] Crash recovery: zombie regions if creator dies without closing (need staleness detection)
 - [ ] `AlreadyExists` on stale regions: creator crashed, old name still in `/dev/shm`, new create fails. Need `create_or_replace` mode.
-- [ ] Name length limit not documented or enforced, POSIX `shm_open` names have system-dependent limits (usually 255 chars)
-- [ ] 32-bit overflow in `zinc_version()`: major version in upper 16 bits of u32 is fine for now, but worth noting
+- [x] Enforce and document platform name limits, including the `/zinc_` prefix
+- [x] Verify `zinc_version()` packing: a u16 header version occupies the upper 16 bits of u32 without overflow
 - [x] Node adapter: retain the region while `asBuffer` views are alive
-- [ ] Thread safety of `RegionHeader` fields: some are `AtomicU32`, some are plain `u64`. `created_at` read is not atomic.
-- [ ] `fnv1a` hash collision risk for name dedup, fine for now, document the tradeoff
-- [ ] No `O_SYNC` or `msync` call, data durability guarantee is unclear. Document or add `flush()` method.
+- [x] Publish the immutable header with an atomic release/acquire magic value before reading fields
+- [x] Document that `name_hash` is diagnostic; name lookup uses the full POSIX name
+- [x] Document volatile shared memory and the absence of disk durability guarantees
 
 ---
 

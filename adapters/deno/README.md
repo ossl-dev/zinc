@@ -1,83 +1,22 @@
-# Zinc — Deno Adapter
+# Zinc Deno adapter
 
-Zero-copy shared memory for Deno via `Deno.dlopen`.
+Deno.dlopen loads the core from target/release relative to this checkout. Use Deno 2. Linux and macOS are supported.
 
-## Install
-
-### JSR
+Registry publishing is pending. From the repository root:
 
 ```bash
-deno add @ossl/zinc
+cargo build --release -p zinc-core --lib
+deno test --unstable-ffi --allow-ffi --allow-read --config adapters/deno/deno.json adapters/deno/tests/
 ```
 
-### Direct import
+Import from your source checkout:
 
 ```typescript
-import { SharedRegion } from "./mod.ts";
+import { SharedRegion } from "./adapters/deno/src/mod.ts";
 ```
 
-Requires `libzinc_core.dylib` (macOS) / `libzinc_core.so` (Linux) at the expected path, or set `DENO_LIB_ZINC` env var.
+`buffer()` returns a zero-copy Uint8Array. Keep the region open while using it. `close()` is idempotent and `Symbol.dispose` is supported. `wait()` blocks the calling thread, returns false on timeout, and throws on other errors. Use a worker for an asynchronous JavaScript producer. `tryWait()` checks without blocking.
 
-### Building from source
+Names contain ASCII letters, digits, underscores, and hyphens; do not add a leading slash. Capacity must be positive and a multiple of the system page size. Keep the creator alive until other processes open the region. Closing the creator unlinks the name while existing mappings remain valid.
 
-```bash
-cargo build --release --manifest-path core/Cargo.toml
-```
-
-## Usage
-
-```typescript
-import { SharedRegion } from "@ossl/zinc";
-
-// Process A — create
-const region = SharedRegion.create("/my-data", 4096);
-const buf = region.buffer();
-const view = new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
-view[0] = 42.0;
-region.notify();
-
-// Process B — open
-const region2 = SharedRegion.open("/my-data");
-const buf2 = region2.buffer();
-const view2 = new Float32Array(buf2.buffer, buf2.byteOffset, buf2.byteLength / 4);
-console.log(view2[0]); // 42.0
-region2.wait(5000);
-```
-
-## API
-
-### `SharedRegion.create(name, capacity)`
-Create a new shared region.
-
-### `SharedRegion.open(name)`
-Open an existing shared region.
-
-### `region.buffer() → Uint8Array`
-Zero-copy view of the shared memory.
-
-### `region.notify()`
-Signal all waiters.
-
-### `region.wait(timeoutMs?) → boolean`
-Block until notified.
-
-### `region.close()`
-Release the handle.
-
-## Publish
-
-```bash
-cd adapters/deno
-deno publish
-```
-
-## Platform support
-
-| OS | Status |
-|---|---|
-| Linux | ✅ |
-| macOS | ✅ |
-
-> Windows is not supported. Zinc requires POSIX `shm_open` + `mmap`.
-
-`tryWait()` consumes a pending notification without blocking. Closing is idempotent; other operations on a closed handle throw. Borrowed buffers must be released before closing the region, and waits block the calling thread. Use a worker when the writer runs JavaScript asynchronously.
+See the [API reference](../../docs/adapters/deno.mdx), [notification rules](../../docs/guides/notify-wait.mdx), and [source installation guide](../../docs/getting-started/installation.mdx).

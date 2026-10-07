@@ -1,79 +1,48 @@
 ---
-title: "Platform Notes"
-description: "Platform-specific behavior, limitations, and differences"
+title: "Platform notes"
+description: "Linux and macOS behavior, limits, and diagnostics"
 ---
 
-<Warning>Windows is not supported. Zinc requires POSIX shared memory APIs (`shm_open` + `mmap`) that are not available on Windows.</Warning>
-
-This page documents the differences between supported platforms.
+Zinc supports Linux and macOS on x86_64 and aarch64. Windows is unsupported. The core CI matrix includes Linux x86_64, Linux aarch64, and macOS; adapter jobs run on Linux and macOS.
 
 ## Linux
 
-Linux is the primary development platform and has the most complete backend.
-
-**Shared memory.** Regions are backed by POSIX shared memory objects created with `shm_open`. These appear as files in `/dev/shm/`:
+POSIX shared memory names appear under `/dev/shm/zinc_<name>`. The user-supplied name is limited to 250 ASCII characters from `[a-zA-Z0-9_-]`.
 
 ```bash
 ls -la /dev/shm/ | grep zinc_
+df -h /dev/shm
 ```
 
-The naming convention uses a `/zinc_` prefix. A region created with name `my-data` becomes `/dev/shm/zinc_my-data`.
+Capacity is limited by available shared-memory backing space, address space, and process limits. `kernel.shmmax` and `kernel.shmall` govern System V shared memory, not Zinc's POSIX objects. Containers often mount a small `/dev/shm`; size that mount for the workload. Accessing pages without enough backing space can raise `SIGBUS`.
 
-**Synchronization.** The notify/wait mechanism uses the `futex` syscall (`SYS_futex` with `FUTEX_WAIT` and `FUTEX_WAKE`). This is a kernel-assisted wait that parks the waiting thread until the futex word changes. Zero overhead when no one is waiting: the wake call returns immediately with the number of waiters woken (zero).
+Notifications use shared futex operations, without `FUTEX_PRIVATE_FLAG`. `notify()` always makes a wake syscall. `wait()` checks the sequence before parking and after waking, and retries interrupted or spurious wakes within its timeout.
 
-**Limits.** The maximum number of shared memory segments is limited by `shmmax` and `shmall` kernel parameters:
+## Many mappings
+
+Linux limits virtual memory areas per process through `vm.max_map_count`. Each Zinc mapping uses a virtual memory area, alongside the process's other mappings.
 
 ```bash
-# View current limits
-sysctl kernel.shmmax
-sysctl kernel.shmall
-
-# Typical values
-kernel.shmmax = 18446744073692774399  # effectively unlimited
-kernel.shmall = 18446744073692774399
+sysctl vm.max_map_count
+wc -l /proc/<pid>/maps
 ```
 
-The maximum segment size is 256GB by default on most distributions, adjustable via `shmmax`.
+If an application needs more mappings than the configured limit, an administrator can raise it with `sysctl -w vm.max_map_count=<limit>` and persist the setting in `/etc/sysctl.d/`. Choose a limit based on the application's measured mapping count and available kernel memory. `mmap` can also fail because of address-space limits or memory pressure.
 
-**Cleanup.** Shared memory objects are reference counted by the kernel. An `shm_unlink` removes the name immediately, but the underlying memory is not freed until all processes unmap it. If a process crashes with an active mapping, the memory remains allocated until the process exits. On process exit, the kernel unmaps all mappings and decrements the reference count. If the object was unlinked and all mappings are gone, the memory is freed.
+See [proc_sys_vm](https://man7.org/linux/man-pages/man5/proc_sys_vm.5.html) for the kernel settings.
 
 ## macOS
 
-macOS uses POSIX shared memory (`shm_open`) like Linux, with the same naming convention. The synchronization backend differs because `futex` is a Linux-only syscall.
+Names use the same `/zinc_` prefix but do not appear in the filesystem. The user-supplied name is limited to 25 ASCII characters, accounting for the prefix within Darwin's 31-byte name limit.
 
-**Shared memory.** `shm_open` on macOS creates shared memory objects backed by kernel memory, not the filesystem. They do not appear in `/dev/shm/`. There is no direct equivalent of `ls /dev/shm/` to enumerate active regions.
+Page size can be 16384 bytes on Apple Silicon. Query the system page size rather than assuming 4096 bytes.
 
-**Synchronization.** On macOS, `notify()` increments the atomic sequence counter but does not perform a kernel-assisted wake. The `wait()` function uses an adaptive spin loop:
+The notification fallback checks the sequence for 64 spin iterations, then sleeps for up to 50 microseconds between checks. This reduces idle CPU use, but the scheduler can delay wakeup beyond that interval. A kernel wait backend remains planned.
 
-1. Spin 256 iterations with `spin_loop_hint` (PAUSE instruction on x86, WFE on ARM).
-2. Yield the thread with `std::thread::yield_now()`.
-3. Check for timeout.
-4. Repeat.
+`vmmap <pid>` can help inspect mapped memory. `ipcs` lists System V IPC and does not enumerate these POSIX shared memory objects.
 
-This is less efficient than `futex` for long waits. A waiting thread consumes CPU while spinning. For typical use cases where the wait is short (microseconds to low milliseconds), the spin loop is adequate. For longer waits, reduce the timeout and retry, or implement your own waiting mechanism using `dispatch_semaphore` or `pthread_cond_t` in a cross-process shared memory region.
+## Cleanup and data access
 
-**Future.** macOS has a private `ulock` API (`ulock_wait` / `ulock_wake`) that mirrors futex behavior. It is not public API and may break between macOS versions. A future version of Zinc may add a feature-gated `ulock` backend.
+Closing the creator removes the name on both platforms. Existing mappings remain valid until their handles close. A creator crash can leave a stale name; Zinc does not recover it automatically.
 
-**PIDs.** The `owner_pid` field in the header is set from `std::process::id()`, which on macOS returns the same value as `getpid()`. This is consistent with Linux behavior.
-
-## Portable code patterns
-
-To write code that works identically on both supported platforms, follow these guidelines:
-
-**Allocate generous timeouts.** The Linux futex path is fast; the macOS spin loop is not. If your application needs to run on macOS without modification, use timeouts of at least 1 millisecond and expect the spin loop to consume CPU for the duration.
-
-**Handle timeout gracefully.** The `wait()` function returns `TimedOut` when no notification arrives. Always handle this case. On macOS, timeouts are detected by checking `start.elapsed()` in the spin loop. The resolution depends on the timer granularity, typically 1 microsecond or better.
-
-**Avoid platform-specific assumptions.** The `/dev/shm/` path is Linux-specific. Don't hardcode it or rely on enumerating shared memory objects for discovery. Use a separate coordination mechanism (a PID file, a socket, environment variables) to tell processes which region names to open.
-
-**Test on all target platforms.** The notify/wait behavior differs observably between Linux (zero CPU while waiting) and macOS (CPU proportional to wait duration). Test your synchronization pattern on every platform you deploy to.
-
-## Future roadmap
-
-| Feature | Status |
-|---------|--------|
-| Linux futex backend | Complete |
-| macOS adaptive wait | Complete |
-| macOS ulock backend | Planned |
-| Resource limits documentation | In progress |
-| Performance benchmarks per platform | In progress |
+Notify/wait establishes release/acquire ordering, but does not provide mutual exclusion. Coordinate writes and reads with atomic data or an application protocol. Shared memory is volatile and carries no disk durability guarantee.

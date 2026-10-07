@@ -1,81 +1,24 @@
-# Zinc — Node.js Adapter
+# Zinc Node.js adapter
 
-Zero-copy shared memory for Node.js via [napi-rs](https://napi.rs).
+napi-rs links the Rust core into a native addon. Linux and macOS are supported.
 
-## Install
-
-```bash
-npm install @ossl/zinc
-```
-
-Requires the Zinc core library (`libzinc_core.dylib` / `libzinc_core.so`) on your `LD_LIBRARY_PATH` or adjacent to the native addon.
-
-### Building from source
-
-```bash
-cargo build --release --manifest-path core/Cargo.toml
-cd adapters/node
-npm install
-npx napi build --release
-```
-
-## Usage
-
-```typescript
-import { ZincRegion } from "@ossl/zinc";
-
-// Process A — create
-const region = ZincRegion.create("/my-data", 4096);
-const buf = region.asBuffer();
-const view = new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
-view[0] = 42.0;
-view[1] = 3.14;
-region.notify();
-
-// Process B — open
-const region2 = ZincRegion.open("/my-data");
-const buf2 = region2.asBuffer();
-const view2 = new Float32Array(buf2.buffer, buf2.byteOffset, buf2.byteLength / 4);
-console.log(view2[0]); // 42.0
-region2.wait(5000);
-```
-
-## API
-
-### `ZincRegion.create(name, capacity)`
-Create a new shared region. Fails if one already exists with this name.
-- `name: string` — shm name (alphanumeric, `_`, `-` only)
-- `capacity: number` — size in bytes (must be page-aligned)
-
-### `ZincRegion.open(name)`
-Open an existing shared region.
-
-### `region.asBuffer(env) → JsBuffer`
-Zero-copy `Buffer` backed by the mmap'd region. No data is copied.
-
-### `region.notify()`
-Signal all waiters that data has been written.
-
-### `region.wait(timeoutMs) → boolean`
-Block until notified or timeout elapses.
-
-## Publish
+Registry publishing is pending. From the repository root:
 
 ```bash
 cd adapters/node
-npx napi artifacts
-npm publish
+npm ci
+npm run build
+npm test
 ```
 
-## Platform support
+Import from your source checkout:
 
-| OS | Status |
-|---|---|
-| Linux | ✅ |
-| macOS | ✅ |
+```javascript
+const { ZincRegion } = require("./adapters/node/index.js");
+```
 
-> Windows is not supported. Zinc requires POSIX `shm_open` + `mmap`.
+`asBuffer()` returns a zero-copy Buffer and retains the mapping until collection. There is no explicit close method. Use `notify()`, `wait(timeoutMs)`, and `tryWait()` for notifications. Invalid unsigned 32-bit capacities and timeouts are rejected.
 
-`asBuffer()` retains the shared mapping until the buffer is collected, even if the `ZincRegion` object is collected first. `tryWait()` consumes a pending notification without blocking. `wait()` returns false only on timeout and throws on other failures.
+Names contain ASCII letters, digits, underscores, and hyphens; do not add a leading slash. Capacity must be positive and a multiple of the system page size. Keep the creator alive until other processes open the region. Closing the creator unlinks the name while existing mappings remain valid.
 
-Run `npm run build && npm test` for the integration and buffer lifetime tests.
+See the [API reference](../../docs/adapters/node.mdx), [notification rules](../../docs/guides/notify-wait.mdx), and [source installation guide](../../docs/getting-started/installation.mdx).

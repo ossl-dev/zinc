@@ -7,7 +7,7 @@ description: "Regions, handles, naming, and the architecture of shared memory"
 
 `SharedRegion` is the central type in Zinc. It represents a handle to a mapped shared memory segment. Every language adapter wraps this concept in its native type system: a class in Python, Go, Java, and C#, a struct in Rust, a header-only class in C++.
 
-A region is created by one process and opened by others. The creator's handle carries ownership privileges. Openers get read/write access to the data area. This isn't about security, it's about lifecycle: only the creator may unlink the segment from the system.
+A region is created by one process and opened by others. The creator's handle carries ownership privileges. Openers get read/write access to the data area. Within Zinc, only the creator handle unlinks the name on close. This is a lifecycle rule; operating-system permissions govern access and unlinking.
 
 ```rust
 // Creator: owns the segment, may unlink on drop
@@ -19,31 +19,33 @@ let region = SharedRegion::open("my-segment");
 
 ## Memory layout
 
-Every mapped region starts with a 64-byte header, exactly one cache line on modern x86 and ARM. The header stores library metadata: a magic number for corruption detection, a version field for forward compatibility, a reference count, the creator's PID, and the notification sequence counter.
+Every mapped region starts with a 64-byte header aligned to 64 bytes. The header stores library metadata: a magic number for corruption detection, a version field for forward compatibility, a reference count, the creator's PID, and the notification sequence counter.
 
 ```
 Offset  Size  Field         Description
 ------  ----  -----         -----------
 0       8     magic         Must equal 0x5A494E435F524547 ("ZINC_REG")
-8       2     version       Breaking-change guard (currently 1)
+8       2     version       Breaking-change guard (currently 2)
 10      2     flags         Reserved for future use
-12      4     notify_seq    Futex/semaphore signal counter
+12      4     notify_seq    Notification sequence counter
 16      8     capacity      Usable bytes after the header
 24      4     ref_count     Atomic reference count
 28      4     owner_pid     PID of the creating process
 32      8     created_at    Unix timestamp in nanoseconds
 40      8     name_hash     FNV-1a hash of the region name
-48      8     ring_head     Notification ring write head
-56      8     ring_tail     Notification ring read tail
+48      8     ring_head     Reserved ring write cursor
+56      8     ring_tail     Reserved ring read cursor
 ```
 
-The usable data area begins at byte 64 and extends for `capacity` bytes.
+The usable data area begins at offset `page_size`, after the first page, and extends for `capacity` bytes.
 
 ## Naming
 
 Each shared region has a name, chosen by the creator, that serves as its identifier on the system. Other processes use this name to open the region.
 
 Names must be non-empty and contain only ASCII alphanumeric characters, underscores, and hyphens. The pattern is `[a-zA-Z0-9_-]+`. Spaces, dots, slashes, and other special characters are rejected at the API level before any system call is made. This validation is identical across all adapters since it happens in the Rust core.
+
+Names may be at most 25 bytes on macOS or 250 on Linux.
 
 On Linux and macOS, the name is prefixed with `/zinc_` internally when passed to `shm_open`. So a region named `my-data` becomes a POSIX shared memory object named `/zinc_my-data`. The prefix avoids collisions with other shared memory users on the system.
 
@@ -59,25 +61,26 @@ The lifecycle of a shared region follows these rules:
 
 4. When a process is done, it calls `close` (or drops the handle in languages with destructors). This decrements the reference count.
 
-5. When the creator's handle is closed and the reference count reaches zero, the region is automatically unlinked. The memory is freed once all mapped copies are unmapped.
+5. When the creator's handle closes, the name is unlinked regardless of the reference count. The memory is freed once all mapped copies are unmapped.
 
 6. If an opener closes before the creator, the region stays alive. The creator retains ownership.
 
 7. If the creator crashes or forgets to unlink, the region persists in the system. Clean up stale segments by unlinking the name and creating a new one.
 
-## The 8 C functions
+## The 9 C functions
 
-All language adapters call the same C ABI surface. Every function takes or returns opaque handles and primitive types only.
+FFI adapters call this C ABI surface. Rust and Node use the crate directly. Every function takes or returns opaque handles and primitive types only.
 
 | Function | Purpose |
 |----------|---------|
 | `zinc_create` | Create a region. Returns handle, caller owns it. |
 | `zinc_open` | Open an existing region by name. Returns handle. |
-| `zinc_ptr` | Get raw pointer to the data area (first byte after header). |
+| `zinc_ptr` | Get raw pointer to the data area (first byte after the header page). |
 | `zinc_capacity` | Get usable size in bytes. |
 | `zinc_close` | Close handle. Decrements ref count. May trigger unlink. |
 | `zinc_notify` | Signal all waiters that data has changed. |
 | `zinc_wait` | Block until notified or timeout. |
+| `zinc_try_wait` | Consume a pending notification without blocking. |
 | `zinc_version` | Get library version for compatibility checks. |
 
 Error codes follow POSIX conventions: zero means success, negative values indicate specific errors. Every adapter translates these into language-native exceptions or error types.
@@ -86,7 +89,7 @@ Error codes follow POSIX conventions: zero means success, negative values indica
 
 Zinc provides one zero-copy guarantee and one caveat.
 
-The guarantee: when you call `zinc_ptr` (or the adapter method that wraps it, such as `as_buffer()`, `Bytes()`, or `buffer()`), the returned pointer or buffer view points directly into the mapped memory. No copying occurs. A write through one adapter is immediately visible to all other adapters mapping the same region.
+The guarantee: when you call `zinc_ptr` (or the adapter method that wraps it, such as `as_buffer()`, `Bytes()`, or `buffer()`), the returned pointer or buffer view points directly into the mapped memory. No copying occurs. Publish writes with notifications or atomic operations and prevent concurrent plain-data reads and writes.
 
 The caveat: Zinc does not provide built-in data structure serialization. If you write a Rust struct to shared memory and read it from Python, you must ensure the memory layout matches. For primitive arrays and flat structs, this is straightforward. For complex nested types, you need a wire format such as FlatBuffers or Cap'n Proto that can operate on shared memory directly.
 

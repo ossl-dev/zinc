@@ -30,12 +30,12 @@ rm /dev/shm/zinc_my-data
 
 Capacity must be a positive multiple of the system page size (typically 4096 bytes). The error includes the required page size.
 
-```rust
-// Wrong
+```python
+# Wrong
 region = SharedRegion.create("data", 1000)
 
-// Right
-region = SharedRegion.create("data", 4096)
+# Right
+region = SharedRegion.create("data", 16384)
 ```
 
 ### `zinc_open` fails with `NotFound` (-2)
@@ -58,8 +58,8 @@ OSError: cannot load library 'libzinc_core.so': libzinc_core.so: cannot open sha
 
 ```bash
 cargo build --release --manifest-path core/Cargo.toml
-export LD_LIBRARY_PATH="$(pwd)/core/target/release:$LD_LIBRARY_PATH"   # Linux
-export DYLD_LIBRARY_PATH="$(pwd)/core/target/release:$DYLD_LIBRARY_PATH" # macOS
+export LD_LIBRARY_PATH="$(pwd)/target/release:$LD_LIBRARY_PATH"   # Linux
+export DYLD_LIBRARY_PATH="$(pwd)/target/release:$DYLD_LIBRARY_PATH" # macOS
 ```
 
 ### Node: `npm run build` fails
@@ -84,9 +84,9 @@ The build links against the Cargo workspace in `../../core`, so you need the ful
 **Fix:** Point the linker at the built core library:
 
 ```bash
-export CGO_LDFLAGS="-L$(pwd)/core/target/release"
-export LD_LIBRARY_PATH="$(pwd)/core/target/release:$LD_LIBRARY_PATH"
-go test ./adapters/go/...
+export CGO_LDFLAGS="-L$(pwd)/target/release"
+export LD_LIBRARY_PATH="$(pwd)/target/release:$LD_LIBRARY_PATH"
+(cd adapters/go && go test ./...)
 ```
 
 ### Java: `UnsatisfiedLinkError`
@@ -98,7 +98,7 @@ java.lang.UnsatisfiedLinkError: Unable to load library 'zinc_core'
 JNA looks for `libzinc_core.so` on `java.library.path`. Set it:
 
 ```bash
-java -Djna.library.path=core/target/release -cp target/test-classes:target/classes ...
+java -Djna.library.path=target/release -cp target/test-classes:target/classes ...
 ```
 
 ### C#: `DllNotFoundException`
@@ -114,7 +114,7 @@ Copy `libzinc_core.so` / `libzinc_core.dylib` to the working directory or set `L
 Bun's `bun:ffi` looks for the library at a path relative to the source file. By default it expects:
 
 ```
-core/target/release/libzinc_core.{so,dylib}
+target/release/libzinc_core.{so,dylib}
 ```
 
 Build the core first:
@@ -128,37 +128,14 @@ cargo build --release --manifest-path core/Cargo.toml
 Deno's FFI requires the `--allow-ffi` permission:
 
 ```bash
-deno test --allow-ffi adapters/deno/tests/
+deno test --unstable-ffi --allow-ffi --allow-read --config adapters/deno/deno.json adapters/deno/tests/
 ```
 
 ## macOS-specific issues
 
 ### Wait burns CPU
 
-On macOS, `wait()` uses an adaptive spin loop because `futex` doesn't exist. A waiting thread will consume CPU for the duration of the wait. This is by design.
-
-**Mitigations:**
-- Keep timeouts short (< 100ms).
-- Use `notify()` + manual polling for very long waits.
-- Consider using a `dispatch_semaphore` in shared memory on top of a Zinc region if you need efficient sleeping waits on macOS.
-
-### Region names not visible in filesystem
-
-Unlike Linux, macOS shared memory objects don't appear as files. `ls /dev/shm/` won't work. Use a coordination mechanism (file lock, socket, env var) to tell processes which names to use.
-
-### `shm_open` fails with ENOMEM
-
-macOS has a very low default limit for shared memory. Check:
-
-```bash
-sysctl kern.sysv.shmmax
-```
-
-If too low, increase it:
-
-```bash
-sudo sysctl -w kern.sysv.shmmax=268435456  # 256MB
-```
+On macOS, `wait()` checks the counter for 64 spin iterations, then sleeps for up to 50 microseconds between checks. Long waits no longer spin continuously. Wake latency still depends on scheduling; use `try_wait()` when the caller needs a non-blocking check.
 
 ## Linux-specific issues
 
@@ -177,13 +154,9 @@ If you see `PermissionDenied`, ensure the mount has the sticky bit (`t`) set and
 docker run --shm-size=256m ...
 ```
 
-### Too many regions (`ENFILE` / `EMFILE`)
+### File descriptor exhaustion (`ENFILE` / `EMFILE`)
 
-Each open region holds a file descriptor. The default per-process limit is typically 1024. Raise it:
-
-```bash
-ulimit -n 4096
-```
+Create and open temporarily use a descriptor for `shm_open`, then close it after mapping. A live region keeps a mapping, not a file descriptor. Check other descriptors in the process if these errors persist.
 
 ### `vm.max_map_count` exhaustion
 
@@ -197,7 +170,7 @@ sysctl vm.max_map_count
 sudo sysctl -w vm.max_map_count=262144
 ```
 
-Typical default is 65530, which should be enough for most use cases.
+Check the running system rather than assuming a default. Each region mapping counts toward this limit.
 
 ## General debugging
 
@@ -228,17 +201,7 @@ The filename includes the region name. If no process is using a region (check wi
 ```bash
 # The zinc_version() function returns (major << 16) | minor
 # C ABI check:
-echo 'int zinc_version(); int main() { return zinc_version(); }' | cc -x c - -Lcore/target/release -lzinc_core
+echo 'int zinc_version(); int main() { return zinc_version(); }' | cc -x c - -Ltarget/release -lzinc_core
 ```
 
 Keep the header (`include/zinc.h`) and the library in sync, they're built together.
-
-## File descriptor usage
-
-| Operation | FDs consumed | Released by |
-|-----------|-------------|-------------|
-| `zinc_create` | 2 (shm fd + mmap) | `zinc_close` |
-| `zinc_open` | 2 (shm fd + mmap) | `zinc_close` |
-| `zinc_close` | -2 (closes both) | (immediate) |
-
-Each `zinc_create` or `zinc_open` holds one file descriptor from `shm_open` and one anonymous descriptor from `mmap`. Both are released on `zinc_close`. If your process opens many regions, mind the per-process FD limit.

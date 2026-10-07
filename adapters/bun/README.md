@@ -1,78 +1,22 @@
-# Zinc — Bun Adapter
+# Zinc Bun adapter
 
-Zero-copy shared memory for Bun via `bun:ffi`.
+bun:ffi loads the core from target/release relative to this checkout. Linux and macOS are supported.
 
-## Install
-
-```bash
-npm install @ossl/zinc-bun
-# or
-bun add @ossl/zinc-bun
-```
-
-Requires `libzinc_core.dylib` (macOS) or `libzinc_core.so` (Linux) built and accessible.
-
-### Building from source
+Registry publishing is pending. From the repository root:
 
 ```bash
-cargo build --release --manifest-path core/Cargo.toml
-# Library at: target/release/libzinc_core.{dylib,so}
+cargo build --release -p zinc-core --lib
+bun test adapters/bun/tests
 ```
 
-## Usage
+Import from your source checkout:
 
 ```typescript
-import { SharedRegion } from "@ossl/zinc-bun";
-
-// Process A — create
-const region = SharedRegion.create("/my-data", 4096);
-const buf = region.buffer();
-const view = new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
-view[0] = 42.0;
-region.notify();
-
-// Process B — open
-const region2 = SharedRegion.open("/my-data");
-const buf2 = region2.buffer();
-const view2 = new Float32Array(buf2.buffer, buf2.byteOffset, buf2.byteLength / 4);
-console.log(view2[0]); // 42.0
-region2.wait(5000);
+import { SharedRegion } from "./adapters/bun/src/index.ts";
 ```
 
-## API
+`buffer()` returns a zero-copy Buffer. Keep the region open while using it. `close()` is idempotent and `Symbol.dispose` is supported. `wait()` blocks the calling thread, returns false on timeout, and throws on other errors. Use a worker for an asynchronous JavaScript producer. `tryWait()` checks without blocking.
 
-### `SharedRegion.create(name, capacity)`
-Create a new shared region.
+Names contain ASCII letters, digits, underscores, and hyphens; do not add a leading slash. Capacity must be positive and a multiple of the system page size. Keep the creator alive until other processes open the region. Closing the creator unlinks the name while existing mappings remain valid.
 
-### `SharedRegion.open(name)`
-Open an existing shared region.
-
-### `region.buffer() → Buffer`
-Zero-copy `Buffer` backed by the mmap'd region.
-
-### `region.notify()`
-Signal all waiters.
-
-### `region.wait(timeoutMs?) → boolean`
-Block until notified (default 1000ms).
-
-### `region.close()`
-Release the handle. Also available via `Symbol.dispose`.
-
-## Publish
-
-```bash
-cd adapters/bun
-bun publish
-```
-
-## Platform support
-
-| OS | Status |
-|---|---|
-| Linux | ✅ |
-| macOS | ✅ |
-
-> Windows is not supported. Zinc requires POSIX `shm_open` + `mmap`.
-
-`tryWait()` consumes a pending notification without blocking. Closing is idempotent; other operations on a closed handle throw. Borrowed buffers must be released before closing the region, and waits block the calling thread. Use a worker when the writer runs JavaScript asynchronously.
+See the [API reference](../../docs/adapters/bun.mdx), [notification rules](../../docs/guides/notify-wait.mdx), and [source installation guide](../../docs/getting-started/installation.mdx).
