@@ -1,120 +1,50 @@
 ---
-title: "Region Lifecycle"
+title: "Region lifecycle"
 description: "Creating, opening, closing, and cleaning up shared memory regions"
 ---
 
-Every shared region goes through a fixed set of states: creation, attachment, use, detachment, and cleanup. Understand these states to write correct applications.
-
-## State machine
-
-```mermaid
-stateDiagram-v2
-    [*] --> Create: zinc_create\nshm_open(O_CREAT|O_EXCL)\nftruncate + mmap
-
-    Create --> Active: region ready
-
-    state Active {
-        [*] --> Used
-        Used --> Used: open by other processes
-    }
-
-    Active --> LastOpenerCloses: opener closes
-    Active --> CreatorCloses: creator closes\n(ref_count == 1)
-
-    LastOpenerCloses --> Active: region stays alive for other openers
-
-    CreatorCloses --> Unlink: shm_unlink(name)
-    Unlink --> Unmapped: munmap when last mapping closes
-    Unmapped --> [*]
-
-    note right of CreatorCloses: Only creator can unlink
-```
+The creator owns the region's name. Each handle owns its mapping. Closing the creator removes the name; existing mappings stay usable until their handles close.
 
 ## Create
 
-`SharedRegion::create` (or the equivalent constructor in each adapter) creates a new shared memory segment. It performs three system calls:
+`SharedRegion::create` calls `shm_open` with `O_CREAT | O_EXCL | O_RDWR`, sets the size with `ftruncate`, and maps the object with `MAP_SHARED`. Permissions are `0600`, subject to the process umask. A duplicate name returns `AlreadyExists`.
 
-1. `shm_open(name, O_CREAT | O_EXCL | O_RDWR)` -- creates the POSIX shared memory object. The `O_EXCL` flag makes this atomic: if an object with the same name already exists, the call fails with `EEXIST`.
+The first page holds a 64-byte header and padding. Data starts at the next page boundary. Capacity must be positive and a multiple of the system page size. Use the platform's page size rather than assuming 4096 bytes; Apple Silicon macOS commonly uses 16384 bytes.
 
-2. `ftruncate(fd, size)` -- sets the size of the shared memory object. The size must include the 64-byte header plus the requested capacity.
+Names contain only ASCII letters, digits, underscores, and hyphens. Zinc adds `/zinc_` internally. The maximum user name is 25 bytes on macOS and 250 on Linux.
 
-3. `mmap(addr, length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0)` -- maps the object into the process address space.
-
-After mapping, the Rust core initializes the header fields: magic number, version, capacity, reference count (set to 1), owner PID, timestamp, and name hash.
-
-A region can be created with any name matching `[a-zA-Z0-9_-]+` and any capacity that is a multiple of the system page size (typically 4096 bytes).
+The core initializes the header, then publishes its magic number with a release store. Failed creation removes the new name and releases the descriptor and mapping.
 
 ## Open
 
-`SharedRegion::open` attaches to an existing region. It performs two system calls:
+`SharedRegion::open` opens the object, checks its size with `fstat`, and maps it. It acquires the published magic number before reading the immutable header fields. The version and capacity must match the library and the mapped size. Invalid, truncated, or incomplete regions return `CorruptedRegion` and release the mapping.
 
-1. `shm_open(name, O_RDWR)` -- opens the existing POSIX object. If no object with this name exists, the call fails with `ENOENT`.
+An open racing with creation may find an incomplete region. Arrange for the creator to announce readiness before readers attach, or retry after that announcement.
 
-2. `mmap(addr, length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0)` -- maps the object into the process address space.
-
-After mapping, the core validates the header: the magic number must match `0x5A494E435F524547` and the version must match the library version. If either check fails, the region is considered corrupted or incompatible.
-
-The reference count in the header is incremented atomically. This prevents the region from being unlinked while openers are attached.
+Each successful open increments the atomic handle count. The count is diagnostic; it does not control name removal or recover after process crashes.
 
 ## Close
 
-`SharedRegion::close` (or dropping the handle in languages with destructors) detaches from the region. It performs two actions:
+Dropping a Rust `SharedRegion`, or closing an adapter handle, decrements the count and unmaps that handle's memory. Closing the creator also calls `shm_unlink`, regardless of the number of readers.
 
-1. The reference count in the header is decremented atomically.
-2. The mapping is removed with `munmap`.
+After the creator closes:
 
-If the closing handle is the owner handle (created, not opened) AND the reference count reaches zero after the decrement, the core also calls `shm_unlink` to remove the POSIX shared memory object. The mapped pages remain accessible to any process that still has the region mapped (because `mmap` with `MAP_SHARED` holds a reference on the underlying pages), but no new process can open the region by name.
+- New opens return `NotFound`.
+- Existing readers keep their mappings and can still access the data.
+- A new creator can reuse the name for a separate region. Old readers continue to see the old region.
 
-## Cleanup patterns
+Raw pointers and borrowed views must not be used after their owning mapping closes. Node buffers retain their mapping until garbage collection.
 
-**Normal cleanup.** The creator opens the region, does work, and exits. Before exit, it ensures all openers have closed their handles. When the creator's handle is dropped, the region is unlinked. The memory is freed when the last process exits.
+## Shutdown and crashes
 
-**Graceful shutdown with long-lived openers.** The creator needs to shut down while openers are still running. Notify them first, for example, by writing a shutdown flag in shared memory, then close the handle. The region is not unlinked because openers still hold references. When openers finish and close their handles, a stale shared memory object may remain. Clean it up by calling `shm_unlink` on the name (via the platform API), then create a fresh region.
+For graceful shutdown, write a shutdown flag using your application's synchronization protocol, notify readers, then close the creator. Readers can finish using their mappings without leaving a stale name.
 
-**Crash recovery.** If the creator process crashes without closing its handle, the reference count is NOT decremented automatically. But the creator is gone, so nobody can decrement it. If only the creator's reference remains, the region becomes a zombie: it exists in the system with no one to unlink it (only the process that called `create` can do that).
+If the creator crashes without dropping its handle, the name may remain. Reference counts are not repaired by the operating system. Confirm that the region is stale before removing it with `shm_unlink("/zinc_<name>")`; removing a live name can split users between different regions.
 
-To recover, clean up the stale region before creating a new one. Use a lock file or PID file alongside the shared memory to detect stale segments. Or unlink the name unconditionally before creating:
+On Linux, named regions appear under `/dev/shm/zinc_<name>`. macOS POSIX shared memory names do not appear as files. `vmmap <pid>` can help inspect a process's mappings; `ipcs` lists System V IPC, not these POSIX objects.
 
-```rust
-// Linux/macOS: unlink stale region before creating
-let _ = platform::unlink("my-data");
-let region = SharedRegion::create("my-data", 65536)?;
-```
+## Data lifetime
 
-**Multiple creators.** Only one process can call `create` for a given name at a time. If two processes try to create the same region concurrently, one succeeds and the other gets `AlreadyExists`. The failed caller should fall back to `open`.
+Zinc provides volatile shared memory, not durable storage. Notification orders memory access but does not flush data to disk. There is no guarantee that data survives a crash or reboot.
 
-## Debugging
-
-On Linux, active shared memory regions appear as files in `/dev/shm/`:
-
-```bash
-ls -la /dev/shm/ | grep zinc_
-```
-
-You should see entries like `/dev/shm/zinc_my-data` for each active region. When all handles are closed and the region is unlinked, these files disappear.
-
-On macOS, shared memory regions do not appear in the filesystem. Use `ipcs -m` or `vmmap <pid>` to inspect Mach shared memory.
-
-To verify that no regions are leaking after your application exits:
-
-```bash
-# Linux
-ls /dev/shm/ | grep zinc_  # should be empty
-
-# macOS
-# No direct equivalent. Run your process with a clean /tmp/shm/ if using file-backed shm.
-```
-
-## Error handling
-
-| Scenario | Result |
-|----------|--------|
-| Create with existing name | `AlreadyExists` |
-| Open with nonexistent name | `NotFound` |
-| Create with empty name | `InvalidName` |
-| Create with invalid characters | `InvalidName` |
-| Create with non-page-aligned size | `InvalidSize` |
-| Open corrupted memory | `CorruptedRegion` |
-| Wait timeout | `TimedOut` |
-
-See the [error codes reference](/reference/error-codes) for the full list of return values.
+See the [error codes reference](/reference/error-codes) for return values.

@@ -7,7 +7,7 @@ pub const VERSION: u16 = 2;
 /// no false sharing with the region data that follows.
 #[repr(C, align(64))]
 pub struct RegionHeader {
-    pub magic: u64,            // 8  — must equal MAGIC
+    pub magic: AtomicU64,      // 8  — must equal MAGIC
     pub version: u16,          // 2  — breaking change guard
     pub flags: u16,            // 2  — reserved
     pub notify_seq: AtomicU32, // 4  — futex/ulock signal counter (was _pad)

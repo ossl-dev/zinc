@@ -8,17 +8,23 @@ pub enum ZincError {
     NotFound(String),
     #[error("size must be > 0 and a multiple of page size ({page_size})")]
     InvalidSize { page_size: usize },
-    #[error("name must be non-empty and contain only [a-zA-Z0-9_-]")]
+    #[error("name must contain only [a-zA-Z0-9_-] and fit the platform length limit")]
     InvalidName,
     #[error("permission denied")]
     PermissionDenied,
     #[error("platform error: {0}")]
     Platform(#[from] std::io::Error),
+    #[error("{syscall} failed: {source}")]
+    Syscall {
+        syscall: &'static str,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("region is full")]
     RingFull,
     #[error("wait timed out")]
     TimedOut,
-    #[error("magic mismatch — region corrupted or wrong version")]
+    #[error("invalid region header, size, or version")]
     CorruptedRegion,
 }
 

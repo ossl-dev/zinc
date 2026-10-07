@@ -4,11 +4,7 @@ use crate::header::{RegionHeader, MAGIC, VERSION};
 use crate::platform;
 use crate::{Result, ZincError};
 
-/// An owned or opened handle to a shared memory region.
-/// `last_seq` tracks the last seen notification sequence number
-/// per-handle to avoid the race where we load an already-incremented
-/// seq as the "expected" value for futex WAIT, which would block
-/// indefinitely waiting for the next notification.
+/// A mapped region. Raw data access requires synchronization between users.
 pub struct SharedRegion {
     inner: RegionInner,
     owner: bool,
@@ -18,74 +14,94 @@ pub struct SharedRegion {
 struct RegionInner {
     name: String,
     map: platform::MappedFile,
+    data: std::ptr::NonNull<u8>,
+    capacity: usize,
 }
+
+// The mapping is stable; header mutations are atomic and data access uses raw pointers.
+unsafe impl Send for RegionInner {}
+unsafe impl Sync for RegionInner {}
 
 impl SharedRegion {
     pub fn create(name: &str, capacity: usize) -> Result<Self> {
         validate_name(name)?;
         let page = page_size();
-        if capacity == 0 || !capacity.is_multiple_of(page) {
-            return Err(ZincError::InvalidSize { page_size: page });
-        }
-        // Reserve full first page for the header so data is page-aligned.
-        // Page-aligned data lets CPU write-combining and L1 streaming
-        // prefetch operate at full throughput for memset/write_bytes.
         let total = page
             .checked_add(capacity)
+            .filter(|&total| total <= isize::MAX as usize && libc::off_t::try_from(total).is_ok())
             .ok_or(ZincError::InvalidSize { page_size: page })?;
-        let map = platform::map(name, platform::CreateOrOpen::Create(total))?;
-        let hdr = unsafe { &mut *(map.ptr.as_ptr() as *mut RegionHeader) };
-        hdr.magic = MAGIC;
-        hdr.version = VERSION;
-        hdr.capacity = capacity as u64;
-        hdr.ref_count.store(1, Ordering::Release);
-        hdr.owner_pid
-            .store(std::process::id() as i32, Ordering::Release);
-        hdr.created_at = std::time::SystemTime::now()
+        if capacity == 0 || capacity % page != 0 {
+            return Err(ZincError::InvalidSize { page_size: page });
+        }
+        let created_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|_| ZincError::Platform(std::io::Error::other(
-                "system clock before unix epoch"
-            )))?
-            .as_nanos() as u64;
-        hdr.name_hash = fnv1a(name.as_bytes());
-        Ok(Self {
-            inner: RegionInner {
-                name: name.into(),
-                map,
-            },
-            owner: true,
-            last_seq: std::sync::atomic::AtomicU32::new(0),
-        })
+            .map_err(|_| {
+                ZincError::Platform(std::io::Error::other("system clock before unix epoch"))
+            })?
+            .as_nanos();
+        let created_at = u64::try_from(created_at)
+            .map_err(|_| ZincError::Platform(std::io::Error::other("timestamp overflow")))?;
+        let map = platform::map(name, platform::CreateOrOpen::Create(total))?;
+        let hdr = map.ptr.as_ptr().cast::<RegionHeader>();
+        // Openers read only magic until the release store publishes the initialized header.
+        unsafe {
+            std::ptr::addr_of_mut!((*hdr).version).write(VERSION);
+            std::ptr::addr_of_mut!((*hdr).flags).write(0);
+            std::ptr::addr_of_mut!((*hdr).capacity).write(capacity as u64);
+            std::ptr::addr_of_mut!((*hdr).created_at).write(created_at);
+            std::ptr::addr_of_mut!((*hdr).name_hash).write(fnv1a(name.as_bytes()));
+            (*hdr).ref_count.store(1, Ordering::Relaxed);
+            (*hdr)
+                .owner_pid
+                .store(std::process::id() as i32, Ordering::Relaxed);
+            (*hdr).magic.store(MAGIC, Ordering::Release);
+        }
+        Ok(Self::from_mapping(name, map, true))
     }
 
     pub fn open(name: &str) -> Result<Self> {
         validate_name(name)?;
         let map = platform::map(name, platform::CreateOrOpen::Open)?;
-        let hdr = unsafe { &*(map.ptr.as_ptr() as *const RegionHeader) };
-        if hdr.magic != MAGIC {
+        let hdr_ptr = map.ptr.as_ptr().cast::<RegionHeader>();
+        let magic = unsafe { &(*hdr_ptr).magic };
+        if magic.load(Ordering::Acquire) != MAGIC {
             return Err(ZincError::CorruptedRegion);
         }
-        if hdr.version != VERSION {
+        let hdr = unsafe { &*hdr_ptr };
+        let capacity = map.len - page_size();
+        if hdr.version != VERSION || hdr.capacity != capacity as u64 {
             return Err(ZincError::CorruptedRegion);
         }
-        hdr.ref_count.fetch_add(1, Ordering::SeqCst);
-        Ok(Self {
+        hdr.ref_count
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
+                count.checked_add(1).filter(|_| count != 0)
+            })
+            .map_err(|_| ZincError::CorruptedRegion)?;
+        Ok(Self::from_mapping(name, map, false))
+    }
+
+    fn from_mapping(name: &str, map: platform::MappedFile, owner: bool) -> Self {
+        let capacity = map.len - page_size();
+        let data = unsafe { std::ptr::NonNull::new_unchecked(map.ptr.as_ptr().add(page_size())) };
+        Self {
             inner: RegionInner {
                 name: name.into(),
                 map,
+                data,
+                capacity,
             },
-            owner: false,
+            owner,
             last_seq: std::sync::atomic::AtomicU32::new(0),
-        })
+        }
     }
 
     #[inline]
     pub fn as_ptr(&self) -> *mut u8 {
-        unsafe { self.inner.map.ptr.as_ptr().add(page_size()) }
+        self.inner.data.as_ptr()
     }
 
     pub fn capacity(&self) -> usize {
-        self.header().capacity as usize
+        self.inner.capacity
     }
 
     pub fn name(&self) -> &str {
@@ -136,17 +152,21 @@ impl SharedRegion {
 
 impl Drop for SharedRegion {
     fn drop(&mut self) {
-        let prev = self.header().ref_count.fetch_sub(1, Ordering::SeqCst);
-        if self.owner && prev == 1 {
+        self.header().ref_count.fetch_sub(1, Ordering::Relaxed);
+        if self.owner {
             let _ = platform::unlink(&self.inner.name);
         }
-        let mut map = std::mem::replace(&mut self.inner.map, platform::MappedFile::dangling());
-        let _ = platform::unmap(&mut map);
     }
 }
 
+#[cfg(target_os = "macos")]
+pub const MAX_NAME_LEN: usize = 25;
+#[cfg(not(target_os = "macos"))]
+pub const MAX_NAME_LEN: usize = 250;
+
 fn validate_name(name: &str) -> Result<()> {
     if name.is_empty()
+        || name.len() > MAX_NAME_LEN
         || !name
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
@@ -161,22 +181,26 @@ pub(crate) fn page_size() -> usize {
     use std::sync::OnceLock;
     static PAGE_SIZE: OnceLock<usize> = OnceLock::new();
     *PAGE_SIZE.get_or_init(|| {
-        unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
+        let size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        usize::try_from(size)
+            .ok()
+            .filter(|&size| size > 0)
+            .expect("sysconf must return a positive page size")
     })
 }
 
 fn fnv1a(bytes: &[u8]) -> u64 {
-    bytes
-        .iter()
-        .fold(0xcbf29ce484222325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x00000100000001b3))
+    bytes.iter().fold(0xcbf29ce484222325u64, |h, &b| {
+        (h ^ b as u64).wrapping_mul(0x00000100000001b3)
+    })
 }
 
 #[cfg(test)]
 mod tests {
     #[cfg(unix)]
-    use std::sync::atomic::Ordering;
-    #[cfg(unix)]
     use crate::header::MAGIC;
+    #[cfg(unix)]
+    use std::sync::atomic::Ordering;
 
     use super::*;
 
@@ -201,7 +225,7 @@ mod tests {
             std::ptr::write(ptr as *mut u64, 0xDEADBEEF_CAFEBABE);
         }
 
-        assert_eq!(region.header().magic, MAGIC);
+        assert_eq!(region.header().magic.load(Ordering::Acquire), MAGIC);
         assert_eq!(region.capacity(), capacity);
 
         let region2 = SharedRegion::open(name).expect("open");
@@ -334,19 +358,43 @@ mod tests {
     #[test]
     fn name_validation_strict() {
         // Invalid — rejected before any platform call
-        assert!(matches!(SharedRegion::create("", 4096), Err(ZincError::InvalidName)));
-        assert!(matches!(SharedRegion::create("has space", 4096), Err(ZincError::InvalidName)));
-        assert!(matches!(SharedRegion::create("has.dot", 4096), Err(ZincError::InvalidName)));
-        assert!(matches!(SharedRegion::create("has/slash", 4096), Err(ZincError::InvalidName)));
-        assert!(matches!(SharedRegion::create("has\0null", 4096), Err(ZincError::InvalidName)));
+        assert!(matches!(
+            SharedRegion::create("", 4096),
+            Err(ZincError::InvalidName)
+        ));
+        assert!(matches!(
+            SharedRegion::create("has space", 4096),
+            Err(ZincError::InvalidName)
+        ));
+        assert!(matches!(
+            SharedRegion::create("has.dot", 4096),
+            Err(ZincError::InvalidName)
+        ));
+        assert!(matches!(
+            SharedRegion::create("has/slash", 4096),
+            Err(ZincError::InvalidName)
+        ));
+        assert!(matches!(
+            SharedRegion::create("has\0null", 4096),
+            Err(ZincError::InvalidName)
+        ));
     }
 
     #[test]
     fn size_validation_strict() {
         let page = page_size();
-        assert!(matches!(SharedRegion::create("t", 0), Err(ZincError::InvalidSize { .. })));
-        assert!(matches!(SharedRegion::create("t", 1), Err(ZincError::InvalidSize { .. })));
-        assert!(matches!(SharedRegion::create("t", page - 1), Err(ZincError::InvalidSize { .. })));
+        assert!(matches!(
+            SharedRegion::create("t", 0),
+            Err(ZincError::InvalidSize { .. })
+        ));
+        assert!(matches!(
+            SharedRegion::create("t", 1),
+            Err(ZincError::InvalidSize { .. })
+        ));
+        assert!(matches!(
+            SharedRegion::create("t", page - 1),
+            Err(ZincError::InvalidSize { .. })
+        ));
         // page-aligned values are valid (but may fail at platform level)
     }
 
@@ -359,5 +407,82 @@ mod tests {
         let total = page.checked_add(aligned_max);
         assert!(total.is_some(), "page + capacity should not overflow");
     }
-}
 
+    #[test]
+    fn creator_closes_before_reader() {
+        let name = "test_owner_first";
+        cleanup(name);
+        let owner = SharedRegion::create(name, page_size()).unwrap();
+        let reader = SharedRegion::open(name).unwrap();
+        unsafe { owner.as_ptr().write(42) };
+        drop(owner);
+        assert!(matches!(
+            SharedRegion::open(name),
+            Err(ZincError::NotFound(_))
+        ));
+        assert_eq!(unsafe { reader.as_ptr().read() }, 42);
+
+        let replacement = SharedRegion::create(name, page_size()).unwrap();
+        drop(reader);
+        let reopened = SharedRegion::open(name).unwrap();
+        assert_eq!(unsafe { reopened.as_ptr().read() }, 0);
+        drop(reopened);
+        drop(replacement);
+    }
+
+    #[test]
+    fn malformed_headers_are_rejected() {
+        let name = "test_bad_header";
+        cleanup(name);
+        let owner = SharedRegion::create(name, page_size()).unwrap();
+        let ptr = owner.inner.map.ptr.as_ptr().cast::<RegionHeader>();
+        unsafe { std::ptr::addr_of_mut!((*ptr).capacity).write(u64::MAX) };
+        assert!(matches!(
+            SharedRegion::open(name),
+            Err(ZincError::CorruptedRegion)
+        ));
+        unsafe { std::ptr::addr_of_mut!((*ptr).capacity).write(page_size() as u64) };
+        owner.header().ref_count.store(u32::MAX, Ordering::Relaxed);
+        assert!(matches!(
+            SharedRegion::open(name),
+            Err(ZincError::CorruptedRegion)
+        ));
+        owner.header().ref_count.store(1, Ordering::Relaxed);
+        owner.header().magic.store(0, Ordering::Release);
+        assert!(matches!(
+            SharedRegion::open(name),
+            Err(ZincError::CorruptedRegion)
+        ));
+    }
+
+    #[test]
+    fn truncated_mapping_is_rejected() {
+        let name = "test_truncated";
+        cleanup(name);
+        let map = platform::map(name, platform::CreateOrOpen::Create(page_size())).unwrap();
+        assert!(matches!(
+            SharedRegion::open(name),
+            Err(ZincError::CorruptedRegion)
+        ));
+        platform::unlink(name).unwrap();
+        drop(map);
+    }
+
+    #[test]
+    fn name_length_limit() {
+        assert!(validate_name(&"a".repeat(MAX_NAME_LEN)).is_ok());
+        assert!(matches!(
+            validate_name(&"a".repeat(MAX_NAME_LEN + 1)),
+            Err(ZincError::InvalidName)
+        ));
+    }
+
+    #[test]
+    fn oversized_capacity_is_rejected_before_mapping() {
+        let capacity = (isize::MAX as usize / page_size()) * page_size();
+        assert!(matches!(
+            SharedRegion::create("test_huge", capacity),
+            Err(ZincError::InvalidSize { .. })
+        ));
+    }
+}

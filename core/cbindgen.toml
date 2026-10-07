@@ -5,7 +5,7 @@ tab_width = 4
 
 [export]
 include = ["zinc_"]
-exclude = ["SharedRegion", "RegionInner", "RegionHeader"]
+exclude = ["SharedRegion", "RegionInner", "RegionHeader", "MAX_NAME_LEN"]
 
 [parse]
 parse_deps = false
