@@ -1,8 +1,8 @@
+mod common;
+
 use std::ffi::CString;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::Arc;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Instant;
 
 use zinc_core::SharedRegion;
 
@@ -167,88 +167,16 @@ impl MmapRegion {
     }
 
     fn notify(&self) {
-        let seq = self.notify_seq();
-        seq.fetch_add(1, Ordering::Release);
-        #[cfg(target_os = "linux")]
-        unsafe {
-            libc::syscall(
-                libc::SYS_futex,
-                seq as *const _ as *mut u32,
-                libc::FUTEX_WAKE,
-                i32::MAX,
-                0usize,
-                0usize,
-                0usize,
-            );
-        }
+        zinc_core::notify(self.notify_seq());
     }
 
-    fn wait(&self, timeout_ms: u32) -> Result<(), ()> {
-        let last = self.last_seq.load(Ordering::Acquire);
+    fn wait(&self, timeout_ms: u32) -> zinc_core::Result<()> {
         let seq = self.notify_seq();
-
-        if seq.load(Ordering::Acquire) != last {
-            self.last_seq
-                .store(seq.load(Ordering::Relaxed), Ordering::Release);
-            return Ok(());
-        }
-
-        #[cfg(target_os = "linux")]
-        {
-            let ts = libc::timespec {
-                tv_sec: (timeout_ms / 1000) as i64,
-                tv_nsec: ((timeout_ms % 1000) * 1_000_000) as i64,
-            };
-            let ret = unsafe {
-                libc::syscall(
-                    libc::SYS_futex,
-                    seq as *const _ as *mut u32,
-                    libc::FUTEX_WAIT,
-                    last,
-                    &ts as *const _,
-                    0usize,
-                    0usize,
-                )
-            };
-            if ret == -1 {
-                let err = std::io::Error::last_os_error();
-                return match err.raw_os_error() {
-                    Some(libc::ETIMEDOUT) => Err(()),
-                    Some(libc::EAGAIN) => {
-                        self.last_seq
-                            .store(seq.load(Ordering::Relaxed), Ordering::Release);
-                        Ok(())
-                    }
-                    _ => panic!("futex WAIT error: {err}"),
-                };
-            }
-            self.last_seq
-                .store(seq.load(Ordering::Relaxed), Ordering::Release);
-            Ok(())
-        }
-
-        #[cfg(not(target_os = "linux"))]
-        {
-            let start = Instant::now();
-            let timeout = Duration::from_millis(timeout_ms as u64);
-            let mut spins: u32 = 0;
-            loop {
-                if seq.load(Ordering::Acquire) != last {
-                    self.last_seq
-                        .store(seq.load(Ordering::Relaxed), Ordering::Release);
-                    return Ok(());
-                }
-                if start.elapsed() >= timeout {
-                    return Err(());
-                }
-                spins = spins.wrapping_add(1);
-                if spins & 0xFF == 0 {
-                    thread::yield_now();
-                } else {
-                    std::hint::spin_loop();
-                }
-            }
-        }
+        let last = self.last_seq.load(Ordering::Relaxed);
+        zinc_core::wait(seq, last, timeout_ms)?;
+        self.last_seq
+            .store(seq.load(Ordering::Acquire), Ordering::Relaxed);
+        Ok(())
     }
 }
 
@@ -264,33 +192,6 @@ impl Drop for MmapRegion {
 }
 
 // ── Notify/wait latency ────────────────────────────────────────
-
-fn bench_notify_latency() -> (f64, usize) {
-    zinc_cleanup();
-    let parent = SharedRegion::create(ZINC_NAME, page_size()).expect("create parent");
-    let child = SharedRegion::open(ZINC_NAME).expect("open child");
-
-    let done = Arc::new(AtomicBool::new(false));
-    let done_signal = done.clone();
-    let handle = thread::spawn(move || {
-        while !done_signal.load(Ordering::Relaxed) {
-            thread::sleep(Duration::from_micros(1));
-            parent.notify();
-        }
-    });
-
-    let iters = 5_000;
-    let start = Instant::now();
-    for _ in 0..iters {
-        child.wait(5000).expect("wait");
-    }
-    done.store(true, Ordering::Release);
-    let elapsed = start.elapsed();
-    handle.join().unwrap();
-
-    let avg = elapsed.as_secs_f64() / iters as f64 * 1_000_000.0;
-    (avg, iters)
-}
 
 // ── Benchmark runners ──────────────────────────────────────────
 
@@ -368,7 +269,7 @@ fn bench_mmap_transfer(nominal: usize, aligned: usize) -> BenchResult {
 // ── Orchestrator ────────────────────────────────────────────────
 
 fn run_benchmarks() {
-    let (latency_us, latency_iters) = bench_notify_latency();
+    let (latency_us, latency_iters) = common::notification_roundtrip();
 
     let sizes: &[usize] = &[1, 64, 1024, 10240, 1048576];
     let mut rows: Vec<(usize, BenchResult, BenchResult)> = Vec::new();
@@ -433,7 +334,7 @@ fn run_benchmarks() {
         BLD, RST
     );
     println!(
-        "{}  Notify/wait latency: {:.1} \u{00b5}s avg ({} iters){}",
+        "{}  Notify/wait thread roundtrip: {:.1} \u{00b5}s avg ({} iters){}",
         BLD, latency_us, latency_iters, RST
     );
     println!(
@@ -442,21 +343,31 @@ fn run_benchmarks() {
     );
     const H: &str = "\u{2500}";
     let c = [
-        H.repeat(10), H.repeat(17), H.repeat(17), H.repeat(10), H.repeat(13),
+        H.repeat(10),
+        H.repeat(17),
+        H.repeat(17),
+        H.repeat(10),
+        H.repeat(13),
     ];
-    println!("\u{250c}{}\u{252c}{}\u{252c}{}\u{252c}{}\u{252c}{}\u{2510}", c[0], c[1], c[2], c[3], c[4]);
+    println!(
+        "\u{250c}{}\u{252c}{}\u{252c}{}\u{252c}{}\u{252c}{}\u{2510}",
+        c[0], c[1], c[2], c[3], c[4]
+    );
     println!(
         "\u{2502} {:<8} \u{2502} {:>15} \u{2502} {:>15} \u{2502} {:>8} \u{2502} {:>11} \u{2502}",
         "Payload", "Zinc", "Mmap", "Ratio", "Data"
     );
-    println!("\u{251c}{}\u{253c}{}\u{253c}{}\u{253c}{}\u{253c}{}\u{2524}", c[0], c[1], c[2], c[3], c[4]);
+    println!(
+        "\u{251c}{}\u{253c}{}\u{253c}{}\u{253c}{}\u{253c}{}\u{2524}",
+        c[0], c[1], c[2], c[3], c[4]
+    );
 
     for (kb, z, m) in &rows {
         let label = fmt_size(*kb);
         let ratio = z.gbps / m.gbps;
         let total = (z.total_gb + m.total_gb) / 2.0;
 
-        let (z_color, m_color) = if ratio >= 0.98 && ratio <= 1.02 {
+        let (z_color, m_color) = if (0.98..=1.02).contains(&ratio) {
             (GRN, GRN)
         } else {
             (YLW, YLW)
@@ -468,13 +379,16 @@ fn run_benchmarks() {
         );
     }
 
-    println!("\u{2514}{}\u{2534}{}\u{2534}{}\u{2534}{}\u{2534}{}\u{2518}", c[0], c[1], c[2], c[3], c[4]);
     println!(
-        "{}Zinc and raw mmap: identical kernel primitives (shm_open+mmap+futex).{}",
+        "\u{2514}{}\u{2534}{}\u{2534}{}\u{2534}{}\u{2534}{}\u{2518}",
+        c[0], c[1], c[2], c[3], c[4]
+    );
+    println!(
+        "{}Both paths use POSIX shared memory and the same notification functions.{}",
         GRN, RST
     );
     println!(
-        "{}Any deviation from ratio 1.00 is OS scheduling noise \u{2014} not a code-path difference.{}",
+        "{}Ratios depend on scheduling, cache state, and bookkeeping costs.{}",
         RST, RST
     );
     println!(

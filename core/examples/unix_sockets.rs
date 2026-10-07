@@ -1,10 +1,10 @@
+mod common;
+
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use zinc_core::SharedRegion;
 
@@ -22,7 +22,9 @@ struct Result {
 fn cleanup(name: &str) {
     let cname = std::ffi::CString::new(format!("/zinc_{name}")).ok();
     if let Some(cn) = cname {
-        unsafe { libc::shm_unlink(cn.as_ptr()); }
+        unsafe {
+            libc::shm_unlink(cn.as_ptr());
+        }
     }
 }
 
@@ -67,32 +69,6 @@ fn pick_iters(payload: usize) -> usize {
 
 fn warmup_iters(payload: usize) -> usize {
     (pick_iters(payload) / 10).max(10)
-}
-
-fn bench_notify_latency() -> (f64, usize) {
-    let parent = create_region(NAME, 4096);
-    let child = open_region(NAME);
-
-    let done = Arc::new(AtomicBool::new(false));
-    let done_signal = done.clone();
-    let handle = thread::spawn(move || {
-        while !done_signal.load(Ordering::Relaxed) {
-            thread::sleep(Duration::from_micros(1));
-            parent.notify();
-        }
-    });
-
-    let iters = 5_000;
-    let start = Instant::now();
-    for _ in 0..iters {
-        child.wait(5000).expect("wait");
-    }
-    done.store(true, Ordering::Release);
-    let elapsed = start.elapsed();
-    handle.join().unwrap();
-
-    let avg = elapsed.as_secs_f64() / iters as f64 * 1_000_000.0;
-    (avg, iters)
 }
 
 fn pick_iters_socket(payload: usize) -> usize {
@@ -182,7 +158,7 @@ fn bench_unix_transfer(payload: usize) -> Result {
 }
 
 fn run_benchmarks() {
-    let (_latency_us, _latency_iters) = bench_notify_latency();
+    let (_latency_us, _latency_iters) = common::notification_roundtrip();
 
     let sizes: &[usize] = &[1, 64, 1024, 10240, 1048576];
     let mut rows: Vec<(usize, Result, Result)> = Vec::new();
@@ -200,19 +176,35 @@ fn run_benchmarks() {
 
         for s in 0..SAMPLES {
             let (z, sk) = if s % 2 == 0 {
-                (bench_zinc_transfer(nominal, aligned), bench_unix_transfer(nominal))
+                (
+                    bench_zinc_transfer(nominal, aligned),
+                    bench_unix_transfer(nominal),
+                )
             } else {
                 let sk = bench_unix_transfer(nominal);
                 let z = bench_zinc_transfer(nominal, aligned);
                 (z, sk)
             };
-            if z.gbps > zinc_best { zinc_best = z.gbps; zinc_data = z.total_gb; }
-            if sk.gbps > socket_best { socket_best = sk.gbps; socket_data = sk.total_gb; }
+            if z.gbps > zinc_best {
+                zinc_best = z.gbps;
+                zinc_data = z.total_gb;
+            }
+            if sk.gbps > socket_best {
+                socket_best = sk.gbps;
+                socket_data = sk.total_gb;
+            }
         }
 
-        rows.push((payload_kb,
-            Result { gbps: zinc_best, total_gb: zinc_data },
-            Result { gbps: socket_best, total_gb: socket_data },
+        rows.push((
+            payload_kb,
+            Result {
+                gbps: zinc_best,
+                total_gb: zinc_data,
+            },
+            Result {
+                gbps: socket_best,
+                total_gb: socket_data,
+            },
         ));
     }
 
@@ -220,25 +212,43 @@ fn run_benchmarks() {
     const RED: &str = "\x1b[31m";
     const RST: &str = "\x1b[0m";
 
-    println!("\n\n{}══════════════════════════════════════════════════════", GRN);
+    println!(
+        "\n\n{}══════════════════════════════════════════════════════",
+        GRN
+    );
     println!("        Zinc vs Unix Socket \u{2014} Throughput");
-    println!("{0}══════════════════════════════════════════════════════{1}", GRN, RST);
+    println!(
+        "{0}══════════════════════════════════════════════════════{1}",
+        GRN, RST
+    );
 
     const H: &str = "\u{2500}";
-    let c = [H.repeat(10), H.repeat(17), H.repeat(17), H.repeat(8), H.repeat(13)];
-    println!("\u{250c}{}\u{252c}{}\u{252c}{}\u{252c}{}\u{252c}{}\u{2510}", c[0], c[1], c[2], c[3], c[4]);
+    let c = [
+        H.repeat(10),
+        H.repeat(17),
+        H.repeat(17),
+        H.repeat(8),
+        H.repeat(13),
+    ];
+    println!(
+        "\u{250c}{}\u{252c}{}\u{252c}{}\u{252c}{}\u{252c}{}\u{2510}",
+        c[0], c[1], c[2], c[3], c[4]
+    );
     println!(
         "\u{2502} {:<8} \u{2502} {:>15} \u{2502} {:>15} \u{2502} {:>6} \u{2502} {:>11} \u{2502}",
         "Payload", "Zinc", "Socket", "Ratio", "Data"
     );
-    println!("\u{251c}{}\u{253c}{}\u{253c}{}\u{253c}{}\u{253c}{}\u{2524}", c[0], c[1], c[2], c[3], c[4]);
+    println!(
+        "\u{251c}{}\u{253c}{}\u{253c}{}\u{253c}{}\u{253c}{}\u{2524}",
+        c[0], c[1], c[2], c[3], c[4]
+    );
 
     for (kb, z, s) in &rows {
         let label = fmt_size(*kb);
         let ratio = z.gbps / s.gbps;
         let total = (z.total_gb + s.total_gb) / 2.0;
 
-        let (z_color, s_color) = if ratio >= 0.98 && ratio <= 1.02 {
+        let (z_color, s_color) = if (0.98..=1.02).contains(&ratio) {
             (GRN, GRN)
         } else if ratio >= 1.0 {
             (GRN, RED)
@@ -252,9 +262,12 @@ fn run_benchmarks() {
         );
     }
 
-    println!("\u{2514}{}\u{2534}{}\u{2534}{}\u{2534}{}\u{2534}{}\u{2518}", c[0], c[1], c[2], c[3], c[4]);
     println!(
-        "{}Zinc: memory-bandwidth-bound. Socket: kernel-copy-bound (~1.4 GB/s).{}",
+        "\u{2514}{}\u{2534}{}\u{2534}{}\u{2534}{}\u{2534}{}\u{2518}",
+        c[0], c[1], c[2], c[3], c[4]
+    );
+    println!(
+        "{}Shared-memory fills and socket payload transfers measure different work.{}",
         GRN, RST
     );
     println!(

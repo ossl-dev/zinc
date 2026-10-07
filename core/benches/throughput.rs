@@ -5,12 +5,16 @@ fn page_size() -> usize {
     unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
 }
 
-fn bench_write_read(c: &mut Criterion) {
-    let mut group = c.benchmark_group("write_read");
+fn bench_write(c: &mut Criterion) {
+    let mut group = c.benchmark_group("write");
     let sizes = [64, 1024, 16384, 65536, 1048576];
 
     for size in sizes {
-        let aligned = if size < page_size() { page_size() } else { size };
+        let aligned = if size < page_size() {
+            page_size()
+        } else {
+            size
+        };
         group.throughput(Throughput::Bytes(size as u64));
 
         let name = format!("bench_throughput_{size}");
@@ -28,12 +32,12 @@ fn bench_write_read(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_notify_wait_roundtrip(c: &mut Criterion) {
-    let mut group = c.benchmark_group("notify_wait_roundtrip");
+fn bench_notification_fast_path(c: &mut Criterion) {
+    let mut group = c.benchmark_group("notification_fast_path");
 
     let region = SharedRegion::create("bench_notify_wait", page_size()).expect("create");
 
-    group.bench_function("roundtrip", |b| {
+    group.bench_function("same_thread", |b| {
         b.iter(|| {
             region.notify();
             region.wait(5000).expect("wait");
@@ -44,5 +48,5 @@ fn bench_notify_wait_roundtrip(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_write_read, bench_notify_wait_roundtrip);
+criterion_group!(benches, bench_write, bench_notification_fast_path);
 criterion_main!(benches);

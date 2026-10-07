@@ -72,11 +72,22 @@ impl SharedRegion {
         if hdr.version != VERSION || hdr.capacity != capacity as u64 {
             return Err(ZincError::CorruptedRegion);
         }
-        hdr.ref_count
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
-                count.checked_add(1).filter(|_| count != 0)
-            })
-            .map_err(|_| ZincError::CorruptedRegion)?;
+        let mut count = hdr.ref_count.load(Ordering::Relaxed);
+        loop {
+            let next = count
+                .checked_add(1)
+                .filter(|_| count != 0)
+                .ok_or(ZincError::CorruptedRegion)?;
+            match hdr.ref_count.compare_exchange_weak(
+                count,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(actual) => count = actual,
+            }
+        }
         Ok(Self::from_mapping(name, map, false))
     }
 

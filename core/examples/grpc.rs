@@ -1,10 +1,10 @@
+mod common;
+
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use prost::Message;
 
@@ -36,7 +36,9 @@ struct Result {
 fn cleanup(name: &str) {
     let cname = std::ffi::CString::new(format!("/zinc_{name}")).ok();
     if let Some(cn) = cname {
-        unsafe { libc::shm_unlink(cn.as_ptr()); }
+        unsafe {
+            libc::shm_unlink(cn.as_ptr());
+        }
     }
 }
 
@@ -121,32 +123,6 @@ fn tcp_read_msg(stream: &mut TcpStream) -> std::io::Result<Vec<u8>> {
 
 // ── Notify/wait latency ────────────────────────────────────────
 
-fn bench_notify_latency() -> (f64, usize) {
-    let parent = create_region(NAME, 4096);
-    let child = open_region(NAME);
-
-    let done = Arc::new(AtomicBool::new(false));
-    let done_signal = done.clone();
-    let handle = thread::spawn(move || {
-        while !done_signal.load(Ordering::Relaxed) {
-            thread::sleep(Duration::from_micros(1));
-            parent.notify();
-        }
-    });
-
-    let iters = 5_000;
-    let start = Instant::now();
-    for _ in 0..iters {
-        child.wait(5000).expect("wait");
-    }
-    done.store(true, Ordering::Release);
-    let elapsed = start.elapsed();
-    handle.join().unwrap();
-
-    let avg = elapsed.as_secs_f64() / iters as f64 * 1_000_000.0;
-    (avg, iters)
-}
-
 // ── Zinc transfer ───────────────────────────────────────────────
 
 fn bench_zinc_transfer(nominal: usize, aligned: usize) -> Result {
@@ -190,14 +166,12 @@ fn bench_grpc_transfer(payload: usize) -> Result {
 
     let server = thread::spawn(move || {
         let listener = TcpListener::bind("127.0.0.1:0").expect("grpc server bind");
-        tx_port.send(listener.local_addr().unwrap().port()).expect("send port");
+        tx_port
+            .send(listener.local_addr().unwrap().port())
+            .expect("send port");
 
         let (mut stream, _peer) = listener.accept().expect("grpc server accept");
-        loop {
-            let data = match tcp_read_msg(&mut stream) {
-                Ok(v) => v,
-                Err(_) => break,
-            };
+        while let Ok(data) = tcp_read_msg(&mut stream) {
             let _chunk = DataChunk::decode(&data[..]).expect("server decode");
             let mut resp = Vec::new();
             EmptyPayload {}.encode(&mut resp).expect("server encode");
@@ -208,7 +182,9 @@ fn bench_grpc_transfer(payload: usize) -> Result {
     let port = rx_port.recv().expect("recv port");
     let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("grpc client connect");
 
-    let chunk = DataChunk { payload: vec![0u8; payload] };
+    let chunk = DataChunk {
+        payload: vec![0u8; payload],
+    };
     let iters = pick_iters_grpc(payload);
     let warmup = warmup_iters_grpc(payload);
 
@@ -245,7 +221,7 @@ fn bench_grpc_transfer(payload: usize) -> Result {
 // ── Orchestrator ────────────────────────────────────────────────
 
 fn run_benchmarks() {
-    let (_latency_us, _latency_iters) = bench_notify_latency();
+    let (_latency_us, _latency_iters) = common::notification_roundtrip();
 
     // Skip 1 GB for gRPC — protobuf serialization would be impractically slow.
     let sizes: &[usize] = &[1, 64, 1024, 10240];
@@ -264,19 +240,35 @@ fn run_benchmarks() {
 
         for s in 0..SAMPLES {
             let (z, g) = if s % 2 == 0 {
-                (bench_zinc_transfer(nominal, aligned), bench_grpc_transfer(nominal))
+                (
+                    bench_zinc_transfer(nominal, aligned),
+                    bench_grpc_transfer(nominal),
+                )
             } else {
                 let g = bench_grpc_transfer(nominal);
                 let z = bench_zinc_transfer(nominal, aligned);
                 (z, g)
             };
-            if z.gbps > zinc_best { zinc_best = z.gbps; zinc_data = z.total_gb; }
-            if g.gbps > grpc_best { grpc_best = g.gbps; grpc_data = g.total_gb; }
+            if z.gbps > zinc_best {
+                zinc_best = z.gbps;
+                zinc_data = z.total_gb;
+            }
+            if g.gbps > grpc_best {
+                grpc_best = g.gbps;
+                grpc_data = g.total_gb;
+            }
         }
 
-        rows.push((payload_kb,
-            Result { gbps: zinc_best, total_gb: zinc_data },
-            Result { gbps: grpc_best, total_gb: grpc_data },
+        rows.push((
+            payload_kb,
+            Result {
+                gbps: zinc_best,
+                total_gb: zinc_data,
+            },
+            Result {
+                gbps: grpc_best,
+                total_gb: grpc_data,
+            },
         ));
     }
 
@@ -284,25 +276,43 @@ fn run_benchmarks() {
     const RED: &str = "\x1b[31m";
     const RST: &str = "\x1b[0m";
 
-    println!("\n\n{}══════════════════════════════════════════════════════", GRN);
+    println!(
+        "\n\n{}══════════════════════════════════════════════════════",
+        GRN
+    );
     println!("         Zinc vs gRPC (prost + TCP) \u{2014} Throughput");
-    println!("{0}══════════════════════════════════════════════════════{1}", GRN, RST);
+    println!(
+        "{0}══════════════════════════════════════════════════════{1}",
+        GRN, RST
+    );
 
     const H: &str = "\u{2500}";
-    let c = [H.repeat(10), H.repeat(17), H.repeat(17), H.repeat(8), H.repeat(13)];
-    println!("\u{250c}{}\u{252c}{}\u{252c}{}\u{252c}{}\u{252c}{}\u{2510}", c[0], c[1], c[2], c[3], c[4]);
+    let c = [
+        H.repeat(10),
+        H.repeat(17),
+        H.repeat(17),
+        H.repeat(8),
+        H.repeat(13),
+    ];
+    println!(
+        "\u{250c}{}\u{252c}{}\u{252c}{}\u{252c}{}\u{252c}{}\u{2510}",
+        c[0], c[1], c[2], c[3], c[4]
+    );
     println!(
         "\u{2502} {:<8} \u{2502} {:>15} \u{2502} {:>15} \u{2502} {:>6} \u{2502} {:>11} \u{2502}",
         "Payload", "Zinc", "gRPC", "Ratio", "Data"
     );
-    println!("\u{251c}{}\u{253c}{}\u{253c}{}\u{253c}{}\u{253c}{}\u{2524}", c[0], c[1], c[2], c[3], c[4]);
+    println!(
+        "\u{251c}{}\u{253c}{}\u{253c}{}\u{253c}{}\u{253c}{}\u{2524}",
+        c[0], c[1], c[2], c[3], c[4]
+    );
 
     for (kb, z, g) in &rows {
         let label = fmt_size(*kb);
         let ratio = z.gbps / g.gbps;
         let total = (z.total_gb + g.total_gb) / 2.0;
 
-        let (z_color, g_color) = if ratio >= 0.98 && ratio <= 1.02 {
+        let (z_color, g_color) = if (0.98..=1.02).contains(&ratio) {
             (GRN, GRN)
         } else if ratio >= 1.0 {
             (GRN, RED)
@@ -316,8 +326,14 @@ fn run_benchmarks() {
         );
     }
 
-    println!("\u{2514}{}\u{2534}{}\u{2534}{}\u{2534}{}\u{2534}{}\u{2518}", c[0], c[1], c[2], c[3], c[4]);
-    println!("{}gRPC: protobuf serialize + TCP stack + deserialize — O(n) overhead.{}", RED, RST);
+    println!(
+        "\u{2514}{}\u{2534}{}\u{2534}{}\u{2534}{}\u{2534}{}\u{2518}",
+        c[0], c[1], c[2], c[3], c[4]
+    );
+    println!(
+        "{}gRPC: protobuf serialize + TCP stack + deserialize — O(n) overhead.{}",
+        RED, RST
+    );
     println!(
         "{}Method: min-time (max GB/s) across {} samples, alternating order.{}",
         RST, SAMPLES, RST

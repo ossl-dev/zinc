@@ -1,7 +1,6 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::thread;
-use std::time::{Duration, Instant};
+mod common;
+
+use std::time::Instant;
 
 use redis::Commands;
 
@@ -15,15 +14,14 @@ struct BenchResult {
 }
 
 fn main() {
-    let mut conn = match redis::Client::open("redis://127.0.0.1:6379/")
-        .and_then(|c| c.get_connection())
-    {
-        Ok(conn) => conn,
-        Err(_) => {
-            println!("Redis not available on localhost:6379. Start Redis and retry.");
-            return;
-        }
-    };
+    let mut conn =
+        match redis::Client::open("redis://127.0.0.1:6379/").and_then(|c| c.get_connection()) {
+            Ok(conn) => conn,
+            Err(_) => {
+                println!("Redis not available on localhost:6379. Start Redis and retry.");
+                return;
+            }
+        };
     run_benchmarks(&mut conn);
 }
 
@@ -74,7 +72,9 @@ fn bench_redis_transfer(conn: &mut redis::Connection, payload: usize) -> BenchRe
 
     for i in 0..warmup {
         data.fill(i as u8);
-        let _: () = conn.set("bench_key", data.as_slice()).expect("redis warmup set");
+        let _: () = conn
+            .set("bench_key", data.as_slice())
+            .expect("redis warmup set");
         let _got: Vec<u8> = conn.get("bench_key").expect("redis warmup get");
     }
 
@@ -102,7 +102,9 @@ fn bench_redis_transfer(conn: &mut redis::Connection, payload: usize) -> BenchRe
 fn cleanup(name: &str) {
     let cname = std::ffi::CString::new(format!("/zinc_{name}")).ok();
     if let Some(cn) = cname {
-        unsafe { libc::shm_unlink(cn.as_ptr()); }
+        unsafe {
+            libc::shm_unlink(cn.as_ptr());
+        }
     }
 }
 
@@ -122,32 +124,6 @@ fn page_align(size: usize) -> usize {
 
 fn page_size() -> usize {
     unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
-}
-
-fn bench_notify_latency() -> (f64, usize) {
-    let parent = create_region(NAME, 4096);
-    let child = open_region(NAME);
-
-    let done = Arc::new(AtomicBool::new(false));
-    let done_signal = done.clone();
-    let handle = thread::spawn(move || {
-        while !done_signal.load(Ordering::Relaxed) {
-            thread::sleep(Duration::from_micros(1));
-            parent.notify();
-        }
-    });
-
-    let iters = 5_000;
-    let start = Instant::now();
-    for _ in 0..iters {
-        child.wait(5000).expect("wait");
-    }
-    done.store(true, Ordering::Release);
-    let elapsed = start.elapsed();
-    handle.join().unwrap();
-
-    let avg = elapsed.as_secs_f64() / iters as f64 * 1_000_000.0;
-    (avg, iters)
 }
 
 fn bench_zinc_transfer(nominal: usize, aligned: usize) -> BenchResult {
@@ -187,7 +163,7 @@ fn bench_zinc_transfer(nominal: usize, aligned: usize) -> BenchResult {
 // ── Orchestrator ────────────────────────────────────────────────
 
 fn run_benchmarks(conn: &mut redis::Connection) {
-    let (_latency_us, _latency_iters) = bench_notify_latency();
+    let (_latency_us, _latency_iters) = common::notification_roundtrip();
 
     let sizes: &[usize] = &[1, 64, 1024, 10240, 102400];
     let mut rows: Vec<(usize, BenchResult, BenchResult)> = Vec::new();
@@ -205,19 +181,35 @@ fn run_benchmarks(conn: &mut redis::Connection) {
 
         for s in 0..SAMPLES {
             let (z, r) = if s % 2 == 0 {
-                (bench_zinc_transfer(nominal, aligned), bench_redis_transfer(conn, nominal))
+                (
+                    bench_zinc_transfer(nominal, aligned),
+                    bench_redis_transfer(conn, nominal),
+                )
             } else {
                 let r = bench_redis_transfer(conn, nominal);
                 let z = bench_zinc_transfer(nominal, aligned);
                 (z, r)
             };
-            if z.gbps > zinc_best { zinc_best = z.gbps; zinc_data = z.total_gb; }
-            if r.gbps > redis_best { redis_best = r.gbps; redis_data = r.total_gb; }
+            if z.gbps > zinc_best {
+                zinc_best = z.gbps;
+                zinc_data = z.total_gb;
+            }
+            if r.gbps > redis_best {
+                redis_best = r.gbps;
+                redis_data = r.total_gb;
+            }
         }
 
-        rows.push((payload_kb,
-            BenchResult { gbps: zinc_best, total_gb: zinc_data },
-            BenchResult { gbps: redis_best, total_gb: redis_data },
+        rows.push((
+            payload_kb,
+            BenchResult {
+                gbps: zinc_best,
+                total_gb: zinc_data,
+            },
+            BenchResult {
+                gbps: redis_best,
+                total_gb: redis_data,
+            },
         ));
     }
 
@@ -230,23 +222,38 @@ fn run_benchmarks(conn: &mut redis::Connection) {
         GRN
     );
     println!("           Zinc vs Redis \u{2014} Throughput");
-    println!("{0}══════════════════════════════════════════════════════{1}", GRN, RST);
+    println!(
+        "{0}══════════════════════════════════════════════════════{1}",
+        GRN, RST
+    );
 
     const H: &str = "\u{2500}";
-    let c = [H.repeat(10), H.repeat(17), H.repeat(17), H.repeat(8), H.repeat(13)];
-    println!("\u{250c}{}\u{252c}{}\u{252c}{}\u{252c}{}\u{252c}{}\u{2510}", c[0], c[1], c[2], c[3], c[4]);
+    let c = [
+        H.repeat(10),
+        H.repeat(17),
+        H.repeat(17),
+        H.repeat(8),
+        H.repeat(13),
+    ];
+    println!(
+        "\u{250c}{}\u{252c}{}\u{252c}{}\u{252c}{}\u{252c}{}\u{2510}",
+        c[0], c[1], c[2], c[3], c[4]
+    );
     println!(
         "\u{2502} {:<8} \u{2502} {:>15} \u{2502} {:>15} \u{2502} {:>6} \u{2502} {:>11} \u{2502}",
         "Payload", "Zinc", "Redis", "Ratio", "Data"
     );
-    println!("\u{251c}{}\u{253c}{}\u{253c}{}\u{253c}{}\u{253c}{}\u{2524}", c[0], c[1], c[2], c[3], c[4]);
+    println!(
+        "\u{251c}{}\u{253c}{}\u{253c}{}\u{253c}{}\u{253c}{}\u{2524}",
+        c[0], c[1], c[2], c[3], c[4]
+    );
 
     for (kb, z, r) in &rows {
         let label = fmt_size(*kb);
         let ratio = z.gbps / r.gbps;
         let total = (z.total_gb + r.total_gb) / 2.0;
 
-        let (z_color, r_color) = if ratio >= 0.98 && ratio <= 1.02 {
+        let (z_color, r_color) = if (0.98..=1.02).contains(&ratio) {
             (GRN, GRN)
         } else if ratio >= 1.0 {
             (GRN, RED)
@@ -260,7 +267,10 @@ fn run_benchmarks(conn: &mut redis::Connection) {
         );
     }
 
-    println!("\u{2514}{}\u{2534}{}\u{2534}{}\u{2534}{}\u{2534}{}\u{2518}", c[0], c[1], c[2], c[3], c[4]);
+    println!(
+        "\u{2514}{}\u{2534}{}\u{2534}{}\u{2534}{}\u{2534}{}\u{2518}",
+        c[0], c[1], c[2], c[3], c[4]
+    );
     println!(
         "{}Zinc: memory-bandwidth-bound. Redis: network-stack-bound (~1–5 GB/s localhost).{}",
         GRN, RST
