@@ -101,6 +101,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - run: cargo fmt -- --check && cargo clippy --locked -- -D warnings
+        working-directory: adapters/node
       - run: npm ci && npm run build && npm test
         working-directory: adapters/node
       - uses: oven-sh/setup-bun@v2
