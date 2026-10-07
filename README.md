@@ -174,7 +174,7 @@ Output: `target/release/libzinc_core.{so,dylib}`
 
 ## Prerequisites
 
-- **Rust ≥ 1.85**, [rustup.rs](https://rustup.rs/)
+- **Rust 1.99.0** for development (pinned via rustup); the core library supports Rust 1.85 or later, [rustup.rs](https://rustup.rs/)
 - Optional: **Moon ≥ 2.0**, [moonrepo.dev](https://moonrepo.dev/) (monorepo tool)
 - Language runtimes as needed
 

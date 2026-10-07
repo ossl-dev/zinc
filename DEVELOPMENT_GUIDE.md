@@ -22,7 +22,9 @@ Zinc maps shared memory between processes on Linux and macOS. The Rust core owns
 
 ## Build
 
-Use Rust 1.85 or newer for the core library, and current stable Rust for repository checks. Moon is optional.
+Development uses Rust 1.99.0, pinned in `rust-toolchain.toml`, Moon, and CI. Rustup installs the pinned compiler, rustfmt, and Clippy when you run Cargo in this checkout. The core library still supports Rust 1.85; CI checks that minimum separately. Moon is optional.
+
+If Homebrew's Cargo takes precedence over rustup, put `~/.cargo/bin` first in your shell's `PATH` to use the repository pin.
 
 ```bash
 cargo build --release -p zinc-core

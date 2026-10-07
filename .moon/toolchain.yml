@@ -5,4 +5,4 @@ node:
   packageManager: bun
 
 rust:
-  version: '1.95.0'
+  version: '1.99.0'

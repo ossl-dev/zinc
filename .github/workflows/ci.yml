@@ -13,6 +13,7 @@ on:
       - 'tests/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'rust-toolchain.toml'
       - '.github/workflows/ci.yml'
       - 'deny.toml'
 
@@ -25,7 +26,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.0
         with:
           components: rustfmt, clippy
       - uses: actions/cache@v4
@@ -57,14 +58,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.85.0
-      - run: cargo check -p zinc-core --lib --locked
+      - run: cargo +1.85.0 check -p zinc-core --lib --locked
 
   valgrind:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.0
       - run: sudo apt-get update -y && sudo apt-get install -y valgrind
       - name: Build test executable
         run: cargo test -p zinc-core --lib --no-run --locked --message-format=json > test-artifacts.json
@@ -86,7 +87,7 @@ jobs:
       DYLD_LIBRARY_PATH: ${{ github.workspace }}/target/release
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.0
       - run: cargo build --release -p zinc-core --lib --example interop --locked
       - uses: actions/setup-python@v5
         with:
