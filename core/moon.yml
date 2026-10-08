@@ -4,11 +4,9 @@ tasks:
     inputs:
       - "src/**/*.rs"
       - "Cargo.toml"
-      - "build.rs"
       - "cbindgen.toml"
     outputs:
       - "../target/release/libzinc_core.*"
-      - "../include/zinc.h"
 
   test:
     command: cargo test --all-targets --locked
@@ -19,3 +17,22 @@ tasks:
     command: cargo clippy --all-targets --locked -- -D warnings
     deps:
       - build
+
+  header:
+    command: cargo run --locked --example generate_header --features generate-header
+    inputs:
+      - "src/**/*.rs"
+      - "examples/generate_header.rs"
+      - "cbindgen.toml"
+      - "Cargo.toml"
+    outputs:
+      - "../include/zinc.h"
+
+  check-header:
+    command: cargo run --locked --example generate_header --features generate-header -- --check
+    inputs:
+      - "src/**/*.rs"
+      - "examples/generate_header.rs"
+      - "cbindgen.toml"
+      - "Cargo.toml"
+      - "../include/zinc.h"

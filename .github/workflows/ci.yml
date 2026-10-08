@@ -38,7 +38,8 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('Cargo.lock') }}
       - run: cargo fmt --all -- --check
       - run: cargo test --workspace --all-targets --locked
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - run: cargo run -p zinc-core --example generate_header --features generate-header --locked -- --check
 
   cargo-deny:
     strategy:

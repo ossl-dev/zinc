@@ -13,7 +13,7 @@ From a repository checkout:
 cargo build --release -p zinc-core --lib --example interop --locked
 cargo fmt --all -- --check
 cargo test --workspace --all-targets --locked
-cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 ```
 
 Install the adapter runtimes you need, then run `bash tests/runner.sh`. Python needs `python3 -m pip install -e 'adapters/python[test]'`. The Node package has its own Cargo manifest and checks. The [development guide](https://github.com/ossl-dev/zinc/blob/main/DEVELOPMENT_GUIDE.md) describes the layout, dependencies, and benchmark limits.
@@ -24,7 +24,13 @@ Mapping operations live in `core/src/platform/unix.rs`. `MappedFile` unmaps on d
 
 Add regression tests for behavioral fixes. Check failed setup, creator-first close, pending notifications, and capacity boundaries when they apply. Keep hot data-access paths free of allocations and preserve the C ABI layout.
 
-Edit Rust declarations or `core/cbindgen.toml` to change the generated C header. Do not edit `include/zinc.h` directly. Update adapter declarations when adding an exported function.
+Edit Rust declarations or `core/cbindgen.toml` to change the C header, then regenerate it:
+
+```bash
+cargo run -p zinc-core --example generate_header --features generate-header --locked
+```
+
+Ordinary builds use the checked-in header and skip cbindgen. Add `-- --check` to verify it without writing; CI and release builds check this too. Do not edit `include/zinc.h` directly. Update adapter declarations when adding an exported function.
 
 ## New adapters
 

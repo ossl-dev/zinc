@@ -7,6 +7,7 @@ export LD_LIBRARY_PATH="$ROOT/target/release:${LD_LIBRARY_PATH:-}"
 export DYLD_LIBRARY_PATH="$ROOT/target/release:${DYLD_LIBRARY_PATH:-}"
 PYTHON="${ZINC_PYTHON:-python3}"
 
+cargo run -p zinc-core --example generate_header --features generate-header --locked -- --check
 cargo test --workspace --all-targets --locked
 cargo build --release -p zinc-core --lib --example interop --locked
 

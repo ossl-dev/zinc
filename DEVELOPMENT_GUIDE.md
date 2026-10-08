@@ -13,7 +13,7 @@ Zinc maps shared memory between processes on Linux and macOS. The Rust core owns
 | `core/src/ring.rs` | Configurable queue with multiple producers and consumers |
 | `core/src/lib.rs` | C ABI and Rust exports |
 | `core/benches/` | Criterion latency, write throughput, and ring benchmarks |
-| `core/examples/` | Comparison programs and the Rust/Python interop fixture |
+| `core/examples/` | Comparison programs, Rust/Python interop fixture, C header generator |
 | `include/zinc.h` | Generated C header |
 | `adapters/` | Language bindings and integration tests |
 | `tests/runner.sh` | Local integration runner |
@@ -30,7 +30,14 @@ If Homebrew's Cargo takes precedence over rustup, put `~/.cargo/bin` first in yo
 cargo build --release -p zinc-core
 ```
 
-The Cargo workspace writes libraries to `target/release/`, not `core/target/`. The build generates `include/zinc.h`; change Rust declarations or `core/cbindgen.toml` rather than editing the header.
+The Cargo workspace writes libraries to `target/release/`, not `core/target/`. Ordinary builds use the checked-in C header and do not run cbindgen or write into the source tree. After changing C exports or `core/cbindgen.toml`, regenerate the header:
+
+```bash
+cargo run -p zinc-core --example generate_header --features generate-header --locked
+cargo run -p zinc-core --example generate_header --features generate-header --locked -- --check
+```
+
+The `generate-header` feature enables cbindgen for this command. `--check` reports a stale header without changing it; CI and release builds run this check. Do not edit `include/zinc.h` directly.
 
 The Node addon is a separate Cargo package because it has a different release and runtime integration:
 
@@ -46,7 +53,7 @@ npm test
 ```bash
 cargo fmt --all -- --check
 cargo test --workspace --all-targets --locked
-cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 ```
 
 For adapters, build the core first. Python tests also use the interop example:
@@ -56,6 +63,8 @@ cargo build --release -p zinc-core --lib --example interop --locked
 python3 -m pip install -e 'adapters/python[test]'
 bash tests/runner.sh
 ```
+
+Python checks include async wait and cancellation coverage, Rust/Python interop, and strict mypy validation of the shipped stubs. Go runs with the race detector.
 
 The runner tests installed language runtimes and prints explicit skips for missing tools. Set `ZINC_PYTHON` to use a virtual environment. Java requires Maven; C# requires the .NET 8 SDK. CI runs all adapters on Linux and macOS, and the core also has an aarch64 Linux job.
 

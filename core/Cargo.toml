@@ -8,12 +8,14 @@ license = "MIT"
 [lib]
 crate-type = ["cdylib", "staticlib", "rlib"]
 
+[features]
+generate-header = ["dep:cbindgen"]
+
 [dependencies]
 thiserror = "2"
 libc = "0.2"
 
-[build-dependencies]
-cbindgen = "0.28"
+cbindgen = { version = "0.28", optional = true }
 
 [dev-dependencies]
 prost = "0.14"
@@ -31,3 +33,7 @@ harness = false
 [[bench]]
 name = "ring"
 harness = false
+
+[[example]]
+name = "generate_header"
+required-features = ["generate-header"]

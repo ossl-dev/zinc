@@ -37,6 +37,7 @@ Stuff that's built but not released or not finished.
 - [x] Add CI badge to README
 - [x] Add `valgrind` leak check to CI (Linux)
 - [x] Add cargo-deny for license + advisory checks
+- [x] Check generated C header freshness in CI; keep cbindgen out of ordinary builds
 
 ### Docs
 
