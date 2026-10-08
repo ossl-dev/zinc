@@ -19,7 +19,9 @@ Import from your source checkout:
 import "zinc"
 ```
 
-For another module, add `replace zinc => /path/to/zinc/adapters/go` to go.mod and run `go get zinc`. `Bytes()` borrows the mapping: do not close while using the slice or another region operation. `Close()` is idempotent for sequential use. `Wait()` returns false on failure; `TryWait()` checks without blocking.
+For another module, add `replace zinc => /path/to/zinc/adapters/go` to go.mod and run `go get zinc`. `Bytes()` borrows the mapping: do not close while using the slice. `Close()` waits for active methods and releases the handle once, even when a `SharedRegion` has been copied. Copies share their position and close state. `Wait()` returns false on failure; `TryWait()` checks without blocking.
+
+`Read`, `Write`, and `Seek` implement `io.ReadWriteSeeker`; `ReadAt` and `WriteAt` leave the position unchanged. Reads stop at capacity with `io.EOF`, and writes that do not fit return `io.ErrShortWrite`. These methods copy bytes and serialize access through the same handle. Other mappings and borrowed slices still need your synchronization protocol. Writes do not notify automatically.
 
 Names contain ASCII letters, digits, underscores, and hyphens; do not add a leading slash. Capacity must be positive and a multiple of the system page size. Keep the creator alive until other processes open the region. Closing the creator unlinks the name while existing mappings remain valid.
 

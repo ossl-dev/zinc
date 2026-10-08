@@ -47,6 +47,28 @@ data := region.Bytes()
 binary.LittleEndian.PutUint32(data[0:4], 42)
 ```
 
+### Read, Write, and Seek
+
+`SharedRegion` implements `io.Reader`, `io.Writer`, `io.Seeker`, `io.ReaderAt`, and `io.WriterAt`. Each opened handle starts at offset zero. Copies of a handle share its position.
+
+```go
+if _, err := region.Write([]byte("ZINC")); err != nil {
+    return err
+}
+region.Notify()
+if _, err := region.Seek(0, io.SeekStart); err != nil {
+    return err
+}
+buf := make([]byte, 4)
+if _, err := io.ReadFull(region, buf); err != nil {
+    return err
+}
+```
+
+`ReadAt(buf, offset)` and `WriteAt(data, offset)` leave the position unchanged. Reads return `io.EOF` when fewer bytes remain than requested. Writes copy what fits and return `io.ErrShortWrite` at capacity. `Seek` accepts positions from zero through capacity and returns `zinc.ErrInvalidOffset` for invalid positions or origins. Failed seeks leave the position unchanged. Closed handles return `io.ErrClosedPipe` from these methods.
+
+The region has a fixed size. The stream covers its full capacity, including unwritten bytes; store a payload length separately if needed. Copying methods serialize access through one handle, but other mappings and borrowed slices still need synchronization. Writes do not send notifications.
+
 ### Notify
 
 ```go
@@ -66,6 +88,8 @@ Returns `true` if notified and `false` on any wait failure, including timeout. `
 ```go
 region.Close()
 ```
+
+`Close()` waits for active methods, including a pending `Wait`, and releases the native handle once. Closing any copy invalidates all copies. A zero-value or nil `*SharedRegion` behaves as a closed handle.
 
 ## Complete example
 

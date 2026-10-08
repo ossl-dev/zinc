@@ -143,7 +143,7 @@ Each adapter should feel native, not like an FFI wrapper.
 
 ### Go
 
-- [ ] `zinc.Read([]byte)` and `zinc.Write([]byte)` with offset tracking
+- [x] `SharedRegion.Read([]byte)` and `Write([]byte)` with offset tracking, plus `ReadAt`, `WriteAt`, and `Seek`
 - [ ] Channel-like API: `region.Send(val)` / `region.Recv()`
 
 ### C++
