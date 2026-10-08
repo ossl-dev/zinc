@@ -22,6 +22,12 @@ pub enum ZincError {
     },
     #[error("ring capacity must be a power of two greater than one")]
     InvalidRingCapacity,
+    #[error("range at {offset} with length {length} exceeds region capacity {capacity}")]
+    OutOfBounds {
+        offset: usize,
+        length: usize,
+        capacity: usize,
+    },
     #[error("region is full")]
     RingFull,
     #[error("no notification is pending")]

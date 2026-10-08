@@ -15,6 +15,7 @@ The Rust core defines a `ZincError` enum with these variants:
 | `NotFound(String)` | -2 (ENOENT) | `open` called with a name that has no active region |
 | `InvalidSize { page_size }` | -22 (EINVAL) | `create` called with size 0 or not page-aligned |
 | `InvalidRingCapacity` | -22 (EINVAL) | Capacity is not a power of two greater than one |
+| `OutOfBounds { offset, length, capacity }` | -22 (EINVAL) | Rust data access exceeds the usable region |
 | `InvalidName` | -22 (EINVAL) | Name is empty, too long, or contains invalid characters |
 | `PermissionDenied` | -1 (EPERM) | OS permission check failed |
 | `Platform(io::Error)` | OS-dependent | Other system or clock error |

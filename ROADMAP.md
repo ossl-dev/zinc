@@ -101,8 +101,8 @@ New capabilities that expand what Zinc can do.
 
 ### Streaming
 
-- [ ] Add `SharedRegion::write_at(offset, data)` and `read_at(offset, buf)` with bounds checks
-- [ ] Add `SharedRegion::write_bytes(offset, val, count)`, like `memset` on the region
+- [x] Add `SharedRegion::write_at(offset, data)` and `read_at(offset, buf)` with bounds checks
+- [x] Add `SharedRegion::write_bytes(offset, val, count)`, like `memset` on the region
 - [ ] Add `SharedRegion::compare_and_swap(offset, old, new)` for lock-free data structures in shared memory
 
 ### Security

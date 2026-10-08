@@ -115,6 +115,51 @@ impl SharedRegion {
         self.inner.capacity
     }
 
+    /// Copy bytes into the data area. Does not notify readers.
+    ///
+    /// # Safety
+    /// Prevent concurrent access to the destination range. `data` must not overlap it.
+    pub unsafe fn write_at(&self, offset: usize, data: &[u8]) -> Result<()> {
+        let destination = self.checked_range(offset, data.len())?;
+        // The range is checked; the caller guarantees exclusive access and no overlap.
+        unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), destination, data.len()) };
+        Ok(())
+    }
+
+    /// Copy bytes from the data area. Does not consume a notification.
+    ///
+    /// # Safety
+    /// Prevent concurrent writes to the source range. `buffer` must not overlap it.
+    pub unsafe fn read_at(&self, offset: usize, buffer: &mut [u8]) -> Result<()> {
+        let source = self.checked_range(offset, buffer.len())?;
+        // The range is checked; the caller guarantees stable data and no overlap.
+        unsafe { std::ptr::copy_nonoverlapping(source, buffer.as_mut_ptr(), buffer.len()) };
+        Ok(())
+    }
+
+    /// Fill a range in the data area. Does not notify readers.
+    ///
+    /// # Safety
+    /// Prevent concurrent access to the destination range.
+    pub unsafe fn write_bytes(&self, offset: usize, value: u8, count: usize) -> Result<()> {
+        let destination = self.checked_range(offset, count)?;
+        // The range is checked; the caller guarantees exclusive access.
+        unsafe { std::ptr::write_bytes(destination, value, count) };
+        Ok(())
+    }
+
+    fn checked_range(&self, offset: usize, length: usize) -> Result<*mut u8> {
+        if offset > self.capacity() || length > self.capacity() - offset {
+            return Err(ZincError::OutOfBounds {
+                offset,
+                length,
+                capacity: self.capacity(),
+            });
+        }
+        // An empty range may point one byte past the data area.
+        Ok(unsafe { self.as_ptr().add(offset) })
+    }
+
     pub fn name(&self) -> &str {
         &self.inner.name
     }
@@ -194,7 +239,8 @@ fn validate_name(name: &str) -> Result<()> {
     }
 }
 
-pub(crate) fn page_size() -> usize {
+/// System page size in bytes. Region capacities must be positive multiples of it.
+pub fn page_size() -> usize {
     use std::sync::OnceLock;
     static PAGE_SIZE: OnceLock<usize> = OnceLock::new();
     *PAGE_SIZE.get_or_init(|| {
@@ -521,5 +567,63 @@ mod tests {
         owner.notify();
         assert!(reader.try_wait());
         assert!(!reader.try_wait());
+    }
+
+    #[test]
+    fn checked_data_access() {
+        let name = "test_checked_access";
+        cleanup(name);
+        let writer = SharedRegion::create(name, page_size()).unwrap();
+        let reader = SharedRegion::open(name).unwrap();
+        let offset = writer.capacity() - 4;
+        let mut buffer = [0; 4];
+        unsafe {
+            writer.write_at(offset, b"ZINC").unwrap();
+            reader.read_at(offset, &mut buffer).unwrap();
+            assert_eq!(&buffer, b"ZINC");
+            writer.write_bytes(offset + 1, b'_', 2).unwrap();
+            reader.read_at(offset, &mut buffer).unwrap();
+        }
+        assert_eq!(&buffer, b"Z__C");
+        assert!(!reader.try_wait());
+        writer.notify();
+        assert!(reader.try_wait());
+    }
+
+    #[test]
+    fn invalid_ranges_do_not_touch_data() {
+        let name = "test_invalid_ranges";
+        cleanup(name);
+        let region = SharedRegion::create(name, page_size()).unwrap();
+        unsafe { region.write_bytes(0, 7, region.capacity()).unwrap() };
+        for (offset, length) in [
+            (region.capacity(), 1),
+            (region.capacity() + 1, 0),
+            (region.capacity() - 1, 2),
+            (usize::MAX, 1),
+            (1, usize::MAX),
+        ] {
+            assert!(matches!(
+                unsafe { region.write_bytes(offset, 0, length) },
+                Err(ZincError::OutOfBounds { .. })
+            ));
+        }
+        let mut buffer = [99; 2];
+        unsafe {
+            assert!(matches!(
+                region.read_at(region.capacity() - 1, &mut buffer),
+                Err(ZincError::OutOfBounds { .. })
+            ));
+            assert_eq!(buffer, [99; 2]);
+            assert!(matches!(
+                region.write_at(region.capacity() - 1, &[0; 2]),
+                Err(ZincError::OutOfBounds { .. })
+            ));
+            region.read_at(region.capacity() - 2, &mut buffer).unwrap();
+            assert_eq!(buffer, [7; 2]);
+            region.write_at(region.capacity(), &[]).unwrap();
+            region.read_at(region.capacity(), &mut []).unwrap();
+            region.write_bytes(region.capacity(), 0, 0).unwrap();
+        }
     }
 }

@@ -16,7 +16,7 @@ cargo add zinc-core --path /path/to/zinc/core
 ## SharedRegion
 
 ```rust
-use zinc_core::SharedRegion;
+use zinc_core::{page_size, SharedRegion};
 ```
 
 ### create
@@ -24,7 +24,7 @@ use zinc_core::SharedRegion;
 Creates a new region. The `name` must match `[a-zA-Z0-9_-]+`. The `capacity` must be a multiple of the system page size (typically 4096).
 
 ```rust
-let region = SharedRegion::create("my-data", 16384)?;
+let region = SharedRegion::create("my-data", page_size())?;
 ```
 
 Returns `Ok(SharedRegion)` on success, or `Err(ZincError)`.
@@ -99,6 +99,24 @@ Regions close automatically when `SharedRegion` drops. If the handle is the crea
 ```
 
 ## Data access
+
+`write_at(offset, data)`, `read_at(offset, buf)`, and `write_bytes(offset, value, count)` check the entire range before copying or filling bytes. Invalid ranges return `ZincError::OutOfBounds` without changing either buffer. An empty range at `capacity()` is valid.
+
+```rust
+use zinc_core::{page_size, SharedRegion};
+
+let region = SharedRegion::create("checked-data", page_size())?;
+let mut result = [0; 4];
+// This example has exclusive access to the mapping.
+unsafe {
+    region.write_at(0, b"ZINC")?;
+    region.read_at(0, &mut result)?;
+    region.write_bytes(4, 0, 16)?;
+}
+assert_eq!(&result, b"ZINC");
+```
+
+These methods remain `unsafe`: prevent concurrent access to bytes being written and concurrent writes to bytes being read. Source and destination buffers must not overlap. Copying bytes does not send a notification; call `notify()` when the update is ready.
 
 Raw pointers require bounds checks and synchronization by the caller. A successful wait publishes preceding writes but does not keep a producer from overwriting data during a read. See [notify and wait](/guides/notify-wait) for the coordination rules.
 

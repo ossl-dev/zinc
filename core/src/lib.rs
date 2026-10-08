@@ -10,7 +10,7 @@ pub mod sync;
 use std::ffi::{c_char, c_void, CStr};
 
 pub use error::{Result, ZincError};
-pub use region::SharedRegion;
+pub use region::{page_size, SharedRegion};
 pub use sync::{notify, wait};
 
 type ZincHandle = *mut c_void;
@@ -19,9 +19,10 @@ fn error_code(e: &ZincError) -> i32 {
     match e {
         ZincError::AlreadyExists(_) => -17,
         ZincError::NotFound(_) => -2,
-        ZincError::InvalidSize { .. } | ZincError::InvalidName | ZincError::InvalidRingCapacity => {
-            -22
-        }
+        ZincError::InvalidSize { .. }
+        | ZincError::InvalidName
+        | ZincError::InvalidRingCapacity
+        | ZincError::OutOfBounds { .. } => -22,
         ZincError::PermissionDenied => -1,
         ZincError::RingFull | ZincError::WouldBlock => -11,
         ZincError::TimedOut => -110,
