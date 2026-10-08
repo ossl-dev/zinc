@@ -12,3 +12,7 @@ __pycache__/
 adapters/node/index.d.ts
 adapters/csharp/**/bin/
 adapters/csharp/**/obj/
+
+.mypy_cache/
+*.egg-info/
+adapters/python/build/

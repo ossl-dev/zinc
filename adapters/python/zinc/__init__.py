@@ -1,3 +1,5 @@
+import asyncio
+
 from ._ffi import ffi, lib
 
 
@@ -38,11 +40,12 @@ class SharedRegion:
         lib.zinc_notify(self._handle())
 
     def wait(self, timeout_ms: int = 1000) -> bool:
-        code = lib.zinc_wait(self._handle(), timeout_ms)
-        if code == -110:
-            return False
-        _check(code)
-        return True
+        return _wait(self._handle(), timeout_ms)
+
+    async def wait_async(self, timeout_ms: int = 1000) -> bool:
+        """Wait in a worker thread. Cancellation does not stop the native wait."""
+        handle = self._handle()
+        return await asyncio.to_thread(_wait, handle, timeout_ms)
 
     def try_wait(self) -> bool:
         code = lib.zinc_try_wait(self._handle())
@@ -71,3 +74,11 @@ def _name(name: str) -> bytes:
 def _check(code: int) -> None:
     if code != 0:
         raise OSError(-code, f"zinc error {code}")
+
+
+def _wait(handle, timeout_ms: int) -> bool:
+    code = lib.zinc_wait(handle, timeout_ms)
+    if code == -110:
+        return False
+    _check(code)
+    return True

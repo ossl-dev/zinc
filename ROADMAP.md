@@ -132,9 +132,9 @@ Each adapter should feel native, not like an FFI wrapper.
 
 ### Python
 
-- [ ] Async notify/wait: `await region.wait_async()` using `asyncio` + thread pool
+- [x] Async wait: `await region.wait_async()` using `asyncio` + thread pool
 - [x] NumPy structured dtype support: `region.as_numpy(dtype=np.dtype([('x', 'f4'), ('y', 'f4')]))`
-- [ ] Type stubs (`.pyi` files)
+- [x] Type stubs (`.pyi` files) and `py.typed` package marker
 
 ### Node
 

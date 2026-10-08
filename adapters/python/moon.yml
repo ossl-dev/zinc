@@ -6,3 +6,13 @@ tasks:
     inputs:
       - "zinc/**/*.py"
       - "tests/**/*.py"
+      - "zinc/**/*.pyi"
+      - "zinc/py.typed"
+      - "pyproject.toml"
+  typecheck:
+    command: python3 -m mypy --strict tests/typing_check.py
+    inputs:
+      - "zinc/**/*.pyi"
+      - "zinc/py.typed"
+      - "tests/typing_check.py"
+      - "pyproject.toml"

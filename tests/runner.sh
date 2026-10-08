@@ -12,11 +12,12 @@ cargo build --release -p zinc-core --lib --example interop --locked
 
 if command -v "$PYTHON" >/dev/null; then
     "$PYTHON" -m pytest adapters/python/tests -q
+    "$PYTHON" -m mypy --strict adapters/python/tests/typing_check.py
 else
     echo "SKIP Python: runtime unavailable"
 fi
 if command -v go >/dev/null; then
-    (cd adapters/go && go vet ./... && go test ./...)
+    (cd adapters/go && go vet ./... && go test -race ./...)
 else
     echo "SKIP Go: runtime unavailable"
 fi

@@ -77,6 +77,17 @@ success = region.wait(timeout_ms=1000)
 
 Returns `True` if notified, `False` if timed out.
 
+### wait_async
+
+Wait without blocking the asyncio event loop:
+
+```python
+if await region.wait_async(timeout_ms=1000):
+    data = bytes(region.as_buffer()[:4])
+```
+
+The native wait runs in the default thread pool. It returns `False` on timeout and raises on other errors, like `wait()`. The worker retains the mapping until it finishes, even if you close the region or cancel the coroutine. Cancellation does not stop the native wait: it may consume a notification before its timeout. Choose a bounded timeout and avoid concurrent waits on the same handle.
+
 ### close
 
 ```python
@@ -112,6 +123,10 @@ if reader.wait(1000):
 ```
 
 The `as_numpy` call returns a view, not a copy. Writing to the array from either process modifies the same physical memory.
+
+## Typing
+
+Type stubs and a `py.typed` marker ship with the package. `as_buffer()` returns a `memoryview`; `as_numpy()` returns a NumPy array, with `uint8` as the default dtype. Install the `numpy` extra for NumPy's type definitions. Factory methods and context managers preserve `SharedRegion` subclasses.
 
 ## FFI details
 

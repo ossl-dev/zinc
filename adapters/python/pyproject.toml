@@ -6,8 +6,11 @@ dependencies = ["cffi>=1.16"]
 
 [project.optional-dependencies]
 numpy = ["numpy>=1.26"]
-test = ["pytest>=7", "numpy>=1.26"]
+test = ["pytest>=7", "numpy>=1.26", "mypy>=1.10"]
 
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-data]
+zinc = ["*.pyi", "py.typed"]

@@ -94,10 +94,11 @@ jobs:
           python-version: '3.12'
       - run: pip install -e 'adapters/python[test]'
       - run: python -m pytest adapters/python/tests -v
+      - run: python -m mypy --strict adapters/python/tests/typing_check.py
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23'
-      - run: go vet ./... && go test -v ./...
+      - run: go vet ./... && go test -race -v ./...
         working-directory: adapters/go
       - uses: actions/setup-node@v4
         with:
