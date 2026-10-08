@@ -26,6 +26,7 @@ type regionState struct {
 	mu     sync.RWMutex
 	ioMu   sync.Mutex
 	handle C.ZincHandle
+	data   []byte
 	offset int64
 }
 
@@ -39,7 +40,7 @@ func Create(name string, capacity uint) (*SharedRegion, error) {
 	if code := C.zinc_create(cname, C.uintptr_t(capacity), &h); code != 0 {
 		return nil, fmt.Errorf("zinc_create: %d", code)
 	}
-	return &SharedRegion{state: &regionState{handle: h}}, nil
+	return newRegion(h), nil
 }
 
 func Open(name string) (*SharedRegion, error) {
@@ -52,7 +53,12 @@ func Open(name string) (*SharedRegion, error) {
 	if code := C.zinc_open(cname, &h); code != 0 {
 		return nil, fmt.Errorf("zinc_open: %d", code)
 	}
-	return &SharedRegion{state: &regionState{handle: h}}, nil
+	return newRegion(h), nil
+}
+
+func newRegion(handle C.ZincHandle) *SharedRegion {
+	data := unsafe.Slice((*byte)(C.zinc_ptr(handle)), C.zinc_capacity(handle))
+	return &SharedRegion{state: &regionState{handle: handle, data: data}}
 }
 
 func (r *SharedRegion) acquire() *regionState {
@@ -68,10 +74,6 @@ func (r *SharedRegion) acquire() *regionState {
 	return s
 }
 
-func (s *regionState) bytes() []byte {
-	return unsafe.Slice((*byte)(C.zinc_ptr(s.handle)), C.zinc_capacity(s.handle))
-}
-
 // Bytes borrows the mapping. Do not close any copy of the region while using it.
 func (r *SharedRegion) Bytes() []byte {
 	s := r.acquire()
@@ -79,7 +81,7 @@ func (r *SharedRegion) Bytes() []byte {
 		return nil
 	}
 	defer s.mu.RUnlock()
-	return s.bytes()
+	return s.data
 }
 
 func (r *SharedRegion) Notify() {
@@ -118,7 +120,7 @@ func (r *SharedRegion) Read(p []byte) (int, error) {
 	defer s.mu.RUnlock()
 	s.ioMu.Lock()
 	defer s.ioMu.Unlock()
-	n, err := readAt(s.bytes(), p, s.offset)
+	n, err := readAt(s.data, p, s.offset)
 	s.offset += int64(n)
 	return n, err
 }
@@ -132,7 +134,7 @@ func (r *SharedRegion) Write(p []byte) (int, error) {
 	defer s.mu.RUnlock()
 	s.ioMu.Lock()
 	defer s.ioMu.Unlock()
-	n, err := writeAt(s.bytes(), p, s.offset)
+	n, err := writeAt(s.data, p, s.offset)
 	s.offset += int64(n)
 	return n, err
 }
@@ -146,7 +148,7 @@ func (r *SharedRegion) ReadAt(p []byte, offset int64) (int, error) {
 	defer s.mu.RUnlock()
 	s.ioMu.Lock()
 	defer s.ioMu.Unlock()
-	return readAt(s.bytes(), p, offset)
+	return readAt(s.data, p, offset)
 }
 
 // WriteAt copies bytes without changing the stream position. It does not notify.
@@ -158,7 +160,7 @@ func (r *SharedRegion) WriteAt(p []byte, offset int64) (int, error) {
 	defer s.mu.RUnlock()
 	s.ioMu.Lock()
 	defer s.ioMu.Unlock()
-	return writeAt(s.bytes(), p, offset)
+	return writeAt(s.data, p, offset)
 }
 
 // Seek sets the position within [0, capacity]. The region cannot grow.
@@ -170,7 +172,7 @@ func (r *SharedRegion) Seek(offset int64, whence int) (int64, error) {
 	defer s.mu.RUnlock()
 	s.ioMu.Lock()
 	defer s.ioMu.Unlock()
-	capacity := int64(C.zinc_capacity(s.handle))
+	capacity := int64(len(s.data))
 	var base int64
 	switch whence {
 	case io.SeekStart:
@@ -233,5 +235,6 @@ func (r *SharedRegion) Close() {
 	if s.handle != nil {
 		C.zinc_close(s.handle)
 		s.handle = nil
+		s.data = nil
 	}
 }

@@ -26,3 +26,5 @@ For another module, add `replace zinc => /path/to/zinc/adapters/go` to go.mod an
 Names contain ASCII letters, digits, underscores, and hyphens; do not add a leading slash. Capacity must be positive and a multiple of the system page size. Keep the creator alive until other processes open the region. Closing the creator unlinks the name while existing mappings remain valid.
 
 See the [API reference](../../docs/adapters/go.mdx), [notification rules](../../docs/guides/notify-wait.mdx), and [source installation guide](../../docs/getting-started/installation.mdx).
+
+Run `go test -run '^$' -bench BenchmarkCopyAt -benchmem` to measure paired `WriteAt`/`ReadAt` copies through one handle. This measures local copying and adapter overhead, not cross-process notification latency. The adapter caches its data view when opening the mapping, so copy operations do not cross cgo.

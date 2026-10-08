@@ -159,3 +159,11 @@ The adapter uses `#cgo LDFLAGS: -lzinc_core -L${SRCDIR}/../../target/release` to
 ## Safety
 
 The `Bytes()` call returns a Go slice pointing to C memory. Go's garbage collector does not manage this memory. The slice is valid as long as the `SharedRegion` handle is not closed. Calling `Close()` and then using the returned slice results in undefined behavior.
+
+## Copy benchmark
+
+```bash
+go test -run '^$' -bench BenchmarkCopyAt -benchmem
+```
+
+This measures paired `WriteAt`/`ReadAt` copies through one handle, at 64 bytes and one system page. The data view is cached when the handle opens, so copy operations avoid cgo calls. Results cover local copies and locking; they do not measure IPC notification latency.
