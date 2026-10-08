@@ -15,7 +15,7 @@ cd zinc
 cargo build --release -p zinc-core --lib --locked
 ```
 
-The Cargo workspace writes `target/release/libzinc_core.so` on Linux or `target/release/libzinc_core.dylib` on macOS. The build generates `include/zinc.h` from the Rust C ABI declarations.
+The Cargo workspace writes `target/release/libzinc_core.so` on Linux or `target/release/libzinc_core.dylib` on macOS. The C header, `include/zinc.h`, is checked in. Regeneration is only needed after changing C exports; see [contributing](/contributing).
 
 ## Build an adapter
 

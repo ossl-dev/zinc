@@ -22,7 +22,7 @@ Zinc maps shared memory between processes on Linux and macOS. The Rust core owns
 
 ## Build
 
-Development uses Rust 1.99.0, pinned in `rust-toolchain.toml`, Moon, and CI. Rustup installs the pinned compiler, rustfmt, and Clippy when you run Cargo in this checkout. The core library still supports Rust 1.85; CI checks that minimum separately. Moon is optional.
+Development uses Rust 1.99.0, pinned in `rust-toolchain.toml` and CI. Rustup installs the pinned compiler, rustfmt, and Clippy when you run Cargo in this checkout. The core library still supports Rust 1.85; CI checks that minimum separately. Moon 2 is optional and runs the installed tools from your shell. `moon run adapter-python:test` builds the core and Rust interop fixture before running Python tests; `moon run adapter-python:typecheck` checks the stubs.
 
 If Homebrew's Cargo takes precedence over rustup, put `~/.cargo/bin` first in your shell's `PATH` to use the repository pin.
 

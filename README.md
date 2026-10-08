@@ -164,11 +164,11 @@ Target: notify/wait roundtrip < 5µs on Linux.
 ## Building
 
 ```bash
-# Build the Rust core (generates libzinc_core + include/zinc.h)
+# Build the Rust core
 cargo build --release --manifest-path core/Cargo.toml
 ```
 
-Output: `target/release/libzinc_core.{so,dylib}`
+Output: `target/release/libzinc_core.{so,dylib}`. The C header is checked in. After changing C exports, regenerate it with `cargo run -p zinc-core --example generate_header --features generate-header --locked`.
 
 ---
 

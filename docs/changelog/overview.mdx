@@ -6,6 +6,12 @@ mode: "center"
 
 <Update label="October 8, 2026">
 
+Rust adds bounds-checked `write_at`, `read_at`, and `write_bytes` methods. Go supports standard reader, writer, and seeker interfaces; copied handles share ownership and position. Go copy operations cache the mapping view to avoid repeated cgo calls.
+
+Python adds `wait_async` and packaged type stubs. Async waits retain the mapping through close and cancellation; the native wait continues until notification or timeout.
+
+C header generation is now an explicit command with a freshness check in CI. Ordinary builds skip cbindgen. Moon 2 tasks use the installed runtimes and build the Rust interop fixture before Python tests.
+
 Region opens now reject truncated mappings and inconsistent headers. Failed mapping operations release their resources. Closing the creator removes the name while existing readers keep their mappings.
 
 The ring supports multiple producers and consumers, configurable capacity, `try_push`, and queue stats. Its tests check concurrent delivery and counter wraparound.

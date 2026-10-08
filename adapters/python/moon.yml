@@ -2,7 +2,7 @@ tasks:
   test:
     command: python3 -m pytest tests/ -v
     deps:
-      - "core:build"
+      - "core:interop"
     inputs:
       - "zinc/**/*.py"
       - "tests/**/*.py"

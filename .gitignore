@@ -16,3 +16,5 @@ adapters/csharp/**/obj/
 .mypy_cache/
 *.egg-info/
 adapters/python/build/
+
+.moon/cache/
